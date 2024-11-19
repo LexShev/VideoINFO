@@ -1,5 +1,29 @@
 <RCC>
   <qresource prefix="bl_img">
+    <file>icons/text_rotation_none_FILL0_wght400_GRAD0_opsz24.svg</file>
+    <file>icons/repartition_FILL0_wght400_GRAD0_opsz24.svg</file>
+    <file>icons/keyboard_tab_FILL0_wght400_GRAD0_opsz24.svg</file>
+    <file>icons/keyboard_tab_rtl_FILL0_wght400_GRAD0_opsz24.svg</file>
+    <file>icons/arrow_back_FILL0_wght400_GRAD0_opsz24.svg</file>
+    <file>icons/arrow_forward_FILL0_wght400_GRAD0_opsz24.svg</file>
+    <file>icons/text_fields_FILL0_wght400_GRAD0_opsz24.svg</file>
+    <file>icons/edit_square_FILL0_wght400_GRAD0_opsz24.svg</file>
+    <file>icons/edit_FILL0_wght400_GRAD0_opsz24.svg</file>
+    <file>icons/edit_note_FILL0_wght400_GRAD0_opsz24.svg</file>
+    <file>icons/format_size_FILL0_wght400_GRAD0_opsz24.svg</file>
+    <file>icons/save_as_FILL0_wght400_GRAD0_opsz24.svg</file>
+    <file>icons/signature_FILL0_wght400_GRAD0_opsz24.svg</file>
+    <file>icons/tab_close_FILL0_wght400_GRAD0_opsz24.svg</file>
+    <file>icons/file_copy_FILL0_wght400_GRAD0_opsz24.svg</file>
+    <file>icons/content_cut_FILL0_wght400_GRAD0_opsz24.svg</file>
+    <file>icons/swap_horiz_FILL0_wght400_GRAD0_opsz24.svg</file>
+    <file>icons/move_group_FILL0_wght400_GRAD0_opsz24.svg</file>
+    <file>icons/summarize_FILL0_wght400_GRAD0_opsz24.svg</file>
+    <file>icons/scan_delete_FILL0_wght400_GRAD0_opsz24.svg</file>
+    <file>icons/list_alt_add_FILL0_wght400_GRAD0_opsz24.svg</file>
+    <file>icons/add_ad_FILL0_wght400_GRAD0_opsz24.svg</file>
+    <file>icons/assignment_add_FILL0_wght400_GRAD0_opsz24.svg</file>
+    <file>icons/add_notes_FILL0_wght400_GRAD0_opsz24.svg</file>
     <file>icons/menu_open_FILL0_wght400_GRAD0_opsz24.svg</file>
     <file>icons/menu_FILL0_wght400_GRAD0_opsz24.svg</file>
     <file>icons/call_to_action_FILL0_wght400_GRAD0_opsz24.svg</file>

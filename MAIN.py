@@ -2,34 +2,41 @@ from __future__ import annotations
 
 import ast
 import datetime
+import shutil
+import time
 import os
 import sqlite3
 import subprocess
 import sys
+import configparser
+import threading
 from math import isclose
 
 # pip install pyqtdarktheme
-# pip install pyqtdarktheme==2.1.0 --ignore-requires-python
 import qdarktheme
 # pip install pyside6
-from PySide6 import QtWidgets, QtSql
-from PySide6.QtCore import Qt, QUrl, QSize
-from PySide6.QtGui import QColor, QPixmap, QIcon, qRgb
+from PySide6 import QtWidgets, QtSql, QtGui
+from PySide6.QtCore import Qt, QUrl, QSize, QThreadPool, QSortFilterProxyModel, QAbstractTableModel, QModelIndex, QDir, \
+    QCoreApplication
+from PySide6.QtGui import QColor, QPixmap, QIcon, qRgb, QKeySequence, QIntValidator, QFont
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtMultimediaWidgets import QVideoWidget
-from PySide6.QtSql import QSqlTableModel
+from PySide6.QtSql import QSqlTableModel, QSqlQuery, QSqlDatabase
 from PySide6.QtWidgets import QApplication, QMainWindow, QFileDialog, QHeaderView, QTableWidgetItem, QSlider, \
     QGraphicsColorizeEffect, QProgressDialog, \
-    QDialog
+    QDialog, QLabel, QComboBox, QToolBar, QLineEdit, QPushButton, QMessageBox, QDialogButtonBox, QVBoxLayout, QMenu, \
+    QListWidget, QWidget
 
-from db_connection import Data
+from sqlite_connection import DataLite
+from posql_connection import DataPos
 from ffmpeg_main import R128, BlackDetect, SilenceDetect, FreezeDetect
 from ffprobe_main import Info
 from forms.ui_db_settings import Ui_DB_Settings
 from forms.ui_settings import Ui_Settings
 from forms.ui_videoinfo import Ui_MainWindow
 from forms.ui_videoinfo_player import Ui_VideoINFO_Player
-
+from forms.ui_confirm_action import Ui_ConfirmDialog
+from forms.ui_file_manager import Ui_FileManager
 
 def now():
     now_time = datetime.datetime.now().strftime("%d-%m-%Y %H:%M:%S")
@@ -86,23 +93,20 @@ def convert_duration_sec(data, fps):
     return conv_data
 
 
-# def convert_duration_frames(data, fps):
-#     val = data
-#     sec = float(data) // fps
-#     frames = float(data) % fps
-#     convert = datetime.timedelta(seconds=sec)
-#     val = str(convert) + str(round(frames, 0))
-#     return val
-
+def convert_tf_to_sec(time):
+    hh = int(time.split(':')[0])
+    mm = int(time.split(':')[1])
+    ss = int(time.split(':')[2])
+    sec = (hh*3600)+(mm*60)+ss
+    return sec
 
 class VideoInfo(QMainWindow):
 
     def __init__(self):
         super(VideoInfo, self).__init__()
+        self.parent_directory = os.path.dirname(os.path.abspath(__file__))
 
-        print(now())
-        print('Создание базы данных')
-        Data().create_database()
+        self.threadpool = QThreadPool()
 
         self.ui = Ui_MainWindow()
         self.ui.setupUi(self)
@@ -111,6 +115,10 @@ class VideoInfo(QMainWindow):
         self.switch_tool_flag = False
 
         self.ui.tableWidget_01.keyPressEvent = self.table_key_press_event
+        self.ui.tableWidget_01.mousePressEvent = self.table_mouse_key_press_event
+        self.ui.tableView_db.keyPressEvent = self.table_db_key_press_event
+        self.ui.tableView_db.mousePressEvent = self.table_db_mouse_key_press_event
+        self.installEventFilter(self)
         # self.setFixedSize(self.ui.tableWidget_01.sizeHint())
         self.ui.tableWidget_01.horizontalHeader().setVisible(False)
         self.ui.tableWidget_01.setColumnCount(1)
@@ -125,13 +133,13 @@ class VideoInfo(QMainWindow):
         self.ui.splitter.setStyleSheet(u"QSplitter::handle:hover{background : rgba(255,255,255,50);}")
 
         # colors
-
         self.red_light = QColor(205, 90, 80)
         self.red_dark = QColor(195, 75, 60)  # C34B3C
         self.yell_light = QColor(230, 165, 45)
         self.yell_dark = QColor(230, 145, 25)
         self.green_light = QColor(88, 145, 39)
         self.green_dark = QColor(79, 130, 35)
+        self.white = QColor(255, 255, 255)
 
         # self.ui.tableWidget_01.setMaximumWidth(2500)
         # self.ui.tableWidget_01.setMaximumHeight(1500)
@@ -144,7 +152,7 @@ class VideoInfo(QMainWindow):
         self.colorizeEffect_wt(self.ui.switchToolButton)
 
         self.ui.tableWidget_01.horizontalHeader().sectionClicked.connect(self.error_highlight)
-        self.ui.tableWidget_01.clicked.connect(self.click_table)
+        self.ui.tableWidget_01.clicked.connect(self.click_table_w)
         # self.ui.tableWidget_01.doubleClicked.connect(self.double_click_table)
         self.ui.tableWidget_01.doubleClicked.connect(self.double_click_video_player)
 
@@ -152,27 +160,42 @@ class VideoInfo(QMainWindow):
 
         self.ui.addButton.setToolTip('Добавить файлы')
         self.colorizeEffect_wt(self.ui.addButton)
-        self.ui.delButton.clicked.connect(self.del_row)
+        self.ui.delButton.clicked.connect(self.del_selected_rows)
         self.ui.delButton.setToolTip('Удалить выбранное')
+        self.ui.delete_from_dbButton.hide()
+        self.ui.delete_from_dbButton.clicked.connect(self.del_file_from_db)
+        self.colorizeEffect_wt(self.ui.delete_from_dbButton)
+        self.ui.move_to_dbButton.setToolTip('Удалить выбранное из базы данных')
+        self.ui.move_to_dbButton.clicked.connect(self.move_to_db)
+        # self.ui.move_to_dbButton.clicked.connect(self.del_file_from_db)
+        self.ui.move_to_dbButton.hide()
+        self.colorizeEffect_wt(self.ui.move_to_dbButton)
+        self.ui.move_to_dbButton.setToolTip('Переместить выбранное в основную базу данных')
         self.ui.playButton.clicked.connect(self.play_selected)
         self.ui.playButton.setToolTip('Воспроизвести выбранное')
         self.ui.openButton.clicked.connect(self.open_folder)
         self.ui.openButton.setToolTip('Открыть папку с файлом')
+        self.ui.move_to_tableButton.clicked.connect(self.move_to_table_01)
+        self.ui.move_to_tableButton.setToolTip('Открыть в таблице')
+        self.colorizeEffect_wt(self.ui.move_to_tableButton)
+        self.ui.move_to_tableButton.hide()
         self.ui.exportButton.clicked.connect(self.export_db_xlsx)
         self.ui.exportButton.setToolTip('Экспорт базы данных в Excel')
 
-        self.ui.r128DtctButton.clicked.connect(self.prepare_loudnorm_single)
+        self.ui.r128DtctButton.clicked.connect(self.prepare_loudnorm_selected)
         self.ui.r128DtctButton.setToolTip('Сканировать выбранное R128')
         self.ui.queueButton.clicked.connect(self.prepare_loudnorm_multi)
         self.ui.queueButton.setToolTip('Сканировать весь список R128')
-        self.ui.blckDtctButton.clicked.connect(self.prepare_black_detect_single)
+        self.ui.blckDtctButton.clicked.connect(self.prepare_black_detect_selected)
         self.ui.blckDtctButton.setToolTip('Сканировать выбранное Black')
-        self.ui.slncDtctButton.clicked.connect(self.prepare_silence_detect_single)
+        self.ui.slncDtctButton.clicked.connect(self.prepare_silence_detect_selected)
         self.ui.slncDtctButton.setToolTip('Сканировать выбранное Silence')
-        self.ui.frzDtctButton.clicked.connect(self.prepare_freeze_detect_single)
+        self.ui.frzDtctButton.clicked.connect(self.prepare_freeze_detect_selected)
         self.ui.frzDtctButton.setToolTip('Сканировать выбранное Freeze')
-        self.ui.fullDtctButton.clicked.connect(self.prepare_full_detect_single)
+        self.ui.fullDtctButton.clicked.connect(self.prepare_full_detect_selected)
         self.ui.fullDtctButton.setToolTip('Полное сканирование')
+        self.ui.migrateButton.clicked.connect(self.file_manage)
+        self.ui.migrateButton.setToolTip('Копирование и переименование')
         self.ui.settingsButton.clicked.connect(self.open_settings_window)
         self.ui.settingsButton.setToolTip('Настройки')
         self.colorizeEffect_wt(self.ui.settingsButton)
@@ -202,8 +225,9 @@ class VideoInfo(QMainWindow):
         self.colorizeEffect_gr(self.ui.frzDtctButton)
         self.ui.fullDtctButton.setEnabled(False)
         self.colorizeEffect_gr(self.ui.fullDtctButton)
-        self.ui.exportButton.setEnabled(False)
-        self.colorizeEffect_gr(self.ui.exportButton)
+        self.colorizeEffect_wt(self.ui.exportButton)
+        # self.ui.migrateButton.setEnabled(False)
+        self.colorizeEffect_wt(self.ui.migrateButton)
 
         # self.last_pressed = None
         # self.timer = QTimer()
@@ -219,10 +243,32 @@ class VideoInfo(QMainWindow):
         self.ui_set.setupUi(self.settings)
         self.ui_set.saveButton_main.clicked.connect(self.save_butt_settings)
         self.ui_set.cancelButton_main.clicked.connect(self.cancel_butt_settings)
-        self.ui_set.saveButton_damage.clicked.connect(self.save_butt_settings)
-        self.ui_set.cancelButton_damage.clicked.connect(self.cancel_butt_settings)
+        self.ui_set.blackCheckBox.clicked.connect(self.black_detect_update_settings)
+        self.ui_set.silenceCheckBox.clicked.connect(self.silence_detect_update_settings)
+        self.ui_set.freezeCheckBox.clicked.connect(self.freeze_detect_update_settings)
+        self.ui_set.chck_con_posql_Button.clicked.connect(self.check_connection_posql_db)
+        self.ui_set.chck_con_sqlite_Button.clicked.connect(self.check_connection_sqlite_db)
+        self.ui_set.blck_tc_in.setInputMask('00:00:00')
+        self.ui_set.blck_tc_out.setInputMask('00:00:00')
+        self.ui_set.slnc_noize_txt.setInputMask('-000')
+        self.ui_set.slnc_tc_in.setInputMask('00:00:00')
+        self.ui_set.slnc_tc_out.setInputMask('00:00:00')
+        self.ui_set.frz_noize_txt.setInputMask('-000')
+        self.ui_set.frz_tc_in.setInputMask('00:00:00')
+        self.ui_set.frz_tc_out.setInputMask('00:00:00')
+
+        self.ui_set.db_posql_host.setInputMask('000.000.000.000')
+
+        # Config settings
+        settings_directory = os.path.join(self.parent_directory, 'config')
+        os.makedirs(settings_directory, exist_ok=True)
+        self.settings_name = os.path.join(settings_directory, 'settings.ini')
+        self.config = configparser.ConfigParser()
+        self.config.read(self.settings_name)
         self.base_settings_main()
         self.base_settings_damage()
+        self.base_settings_db()
+        self.config.sections()
 
         # DB Edit Dialog
         self.db_sett = QDialog()
@@ -233,20 +279,43 @@ class VideoInfo(QMainWindow):
         # self.ui_db_editor = QtWidgets.QDialog()
         # self.db_editor = Ui_DB_editor()
         # self.db_editor.setupUi(self.ui_db_editor)
-        db = QtSql.QSqlDatabase.addDatabase('QSQLITE')
-        db.setDatabaseName('videoinfo.db')
+        self.ui.tableView_db.clicked.connect(self.click_table_db)
+        self.tbl_name = 'films'
+        #
+        # self.posql_db_name = self.config['Posql']['database']
+        # self.posql_db = QtSql.QSqlDatabase.addDatabase('QPSQL')
+        # self.posql_db.setHostName(self.config['Posql']['host'])
+        # self.posql_db.setDatabaseName(self.posql_db_name)
+        # self.posql_db.setUserName('postgres')
+        # self.posql_db.setPassword('@RG3nt!NA5_0')
+        # self.posql_db.setPort(5432)
+
+        db_directory = os.path.join(self.parent_directory, 'db')
+        os.makedirs(db_directory, exist_ok=True)
+        self.sqlite_db_name = os.path.join(db_directory, 'sqlite_videoinfo.db')
+        self.sqlite_db = QtSql.QSqlDatabase.addDatabase('QSQLITE')
+        self.sqlite_db.setDatabaseName(self.sqlite_db_name)
+
+        # print(QSqlDatabase.drivers())
+        # if self.posql_db.open():
+        #
+        #     print('yes')
+        # else:
+        #     print(self.posql_db.lastError().text())
+        #     print('no')
+        # db.setConnectOptions("MYSQL_OPT_RECONNECT=1")
         # db.query("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
         # tbl_name = self.choose_db_tables()
         # tbl_name = self.db_settings.db_list.currentText()
-        tbl_name = 'Video'
-        self.model = QSqlTableModel(self)
-        self.model.setTable(f'{tbl_name}')
-        self.model.select()
-        self.ui.tableView_db.setModel(self.model)
+        self.sqlite_model = QSqlTableModel(self)
+        self.sqlite_model.setTable(self.tbl_name)
+        self.sqlite_model.select()
+        self.ui.tableView_db.setModel(self.sqlite_model)
         self.ui.tableView_db.hide()
-        self.ui.tableView_db.hideRow(0)
-        self.ui.tableView_db.hideColumn(1)
+        self.ui.tableView_db.hideColumn(0)
+        self.ui.tableView_db.setColumnWidth(1, 400)
 
+        self.posql_model = TableModel([0, 0], [0, 0])
         # self.ui.tableView_db.openDB.clicked.connect(self.open_db)
         # self.ui.tableView_db.closeDB.clicked.connect(self.close_db)
 
@@ -326,24 +395,36 @@ class VideoInfo(QMainWindow):
 
         # MenuBar
         self.ui.actionAdd_files.triggered.connect(self.prepare_ffprobe)
-        self.ui.actionDelete_selected_file.triggered.connect(self.del_row)
+        self.ui.actionDelete_selected_file.triggered.connect(self.del_selected_rows)
         self.ui.actionPlay_selected_file.triggered.connect(self.play_selected)
 
         self.ui.actionOpen_destination_folder.triggered.connect(self.open_folder)
+        self.ui.actionSelected_files.triggered.connect(self.selected_db_file_list)
 
-        self.ui.actionExport_table_to_Excel.triggered.connect(self.export_db_xlsx)
+        self.ui.actionExport_table_to_Excel.triggered.connect(self.export_tbl_xlsx)
+        self.ui.actionExport_all_db_to_Excel.triggered.connect(self.export_db_xlsx)
         self.ui.actionSettings.triggered.connect(self.open_settings_window)
         # self.ui.actionOpen_VideoPlayer.triggered.connect(self.switch_db_editor)
         self.ui.actionOpen_VideoPlayer.setEnabled(False)
         self.ui.actionClear_table.triggered.connect(self.clear_table_01)
+        self.ui.actionCheck_DB.triggered.connect(self.check_data_base)
         self.ui.actionShow_all_tables.triggered.connect(self.show_db_tables)
+        self.ui.actionUpdate_data_for_file.triggered.connect(self.update_ffprobe)
+        self.ui.actionChoose_default_directory.triggered.connect(self.choose_default_dir)
 
+        self.ui.actionRun_Loudness_selected_scan.triggered.connect(self.prepare_loudnorm_selected)
         self.ui.actionRun_Loudness_single_scan.triggered.connect(self.prepare_loudnorm_single)
         self.ui.actionRun_Loudness_multiple_scan.triggered.connect(self.prepare_loudnorm_multi)
+        self.ui.actionRun_SilenceDetect_selected_scan.triggered.connect(self.prepare_silence_detect_selected)
+        self.ui.actionRun_SilenceDetect_single_scan.triggered.connect(self.prepare_silence_detect_single)
+        self.ui.actionRun_SilenceDetect_multiple_scan.triggered.connect(self.prepare_silence_detect_multi)
+        self.ui.actionRun_BlackDetect_selected_scan.triggered.connect(self.prepare_black_detect_selected)
         self.ui.actionRun_BlackDetect_single_scan.triggered.connect(self.prepare_black_detect_single)
         self.ui.actionRun_BlackDetect_multiple_scan.triggered.connect(self.prepare_black_detect_multi)
+        self.ui.actionRun_FreezeDetect_selected_scan.triggered.connect(self.prepare_freeze_detect_selected)
         self.ui.actionRun_FreezeDetect_single_scan.triggered.connect(self.prepare_freeze_detect_single)
         self.ui.actionRun_FreezeDetect_multiple_scan.triggered.connect(self.prepare_freeze_detect_multi)
+        self.ui.actionRun_Full_selected_scan.triggered.connect(self.prepare_full_detect_selected)
         self.ui.actionRun_Full_single_scan.triggered.connect(self.prepare_full_detect_single)
         self.ui.actionRun_Full_multiple_scan.triggered.connect(self.prepare_full_detect_multi)
         self.ui.actionRun_Background_Loudness_scan.triggered.connect(self.prepare_background_loudnorm_scan)
@@ -355,8 +436,796 @@ class VideoInfo(QMainWindow):
         self.ui.actionOpen_db_editor.triggered.connect(self.switch_db_editor)
 
         self.ui.actionCreate_db.triggered.connect(self.create_new_db)
+        self.ui.actionReset_scan_result_for_file.triggered.connect(self.reset_mediainfo_tbl_01)
+        self.ui.actionDelete_from_db.triggered.connect(self.clear_mediainfo)
         self.ui.actionShow_Loudness.triggered.connect(self.show_loudness)
         self.ui.actionShow_Details.triggered.connect(self.show_details)
+
+        self.choose_base_btn = QPushButton()
+        self.choose_base_btn.setMinimumSize(QSize(60, 30))
+        self.choose_base_btn.setMaximumSize(QSize(60, 30))
+        self.choose_base_btn.setText('DB')
+        self.choose_btn_style_wt = ('QPushButton{color: rgb(255, 255, 255);'
+                                    'background-color:rgba(255,255,255,30);'
+                                    'border: 1px solid rgba(255,255,255,40);'
+                                    'border-radius:3px;}'
+                                    'QPushButton:hover'
+                                    '{background-color:rgba(255,255,255,50);}'
+                                    'QPushButton:pressed{background-color:rgba(255,255,255,70);}')
+        self.choose_btn_style_red = ('QPushButton{color: rgb(255, 28, 0);'
+                                     'background-color:rgba(255, 28, 0, 30);'
+                                     'border: 1px solid rgba(255, 28, 0, 40);'
+                                     'border-radius:3px;}'
+                                     'QPushButton:hover'
+                                     '{background-color:rgba(255, 28, 0, 50);}'
+                                     'QPushButton:pressed{background-color:rgba(255, 28, 0, 70);}')
+        self.choose_base_btn.setStyleSheet(self.choose_btn_style_wt)
+        self.choose_base_btn.clicked.connect(self.select_db)
+        self.ui.toolBar.addWidget(self.choose_base_btn)
+        self.ui.toolBar.setStyleSheet('padding-left: 10px;'
+                                      'margin-right: 10px;'
+                                      'margin-left: 10px;')
+        self.choose_table_cmbx = QComboBox()
+        self.choose_table_cmbx.addItems(ast.literal_eval(self.config['Toolbar']['table_name_combobox']))
+        self.choose_table_cmbx.currentTextChanged.connect(self.update_db_table)
+        self.choose_table_cmbx.setCurrentText(self.config['Toolbar']['table_name'])
+        self.choose_table_cmbx.setMinimumSize(QSize(160, 0))
+        self.ui.toolBar.addWidget(self.choose_table_cmbx)
+
+        self.filter_table = QLineEdit()
+        self.filter_table.setPlaceholderText("Filter...")
+        self.ui.toolBar.addWidget(self.filter_table)
+
+        # self.filter_posql_table = QLineEdit()
+        # self.filter_posql_table.setPlaceholderText("Search...")
+        # self.ui.toolBar.addWidget(self.filter_posql_table)
+        # self.filter_table.textChanged.connect(self.filter_table_01)
+
+        self.selected_db = 'SQLITE'
+
+        # progress_dialog
+        self.progress_dialog_label = QLabel()
+        self.progress_dialog_label.setAlignment(Qt.AlignCenter)
+        self.progress_dialog_label.setWordWrap(True)
+        # self.ui.toolBar.hide()
+
+        # Confirm action
+        self.conf_action = QDialog()
+        self.conf_dialog = Ui_ConfirmDialog()
+        self.conf_dialog.setupUi(self.conf_action)
+
+        # headers = DataPos().read_all_headers(self.read_tbl_name())
+        # data = DataPos().read_all_data(self.read_tbl_name())
+        # self.posql_model = TableModel(headers, data)
+        self.posql_proxy_model = QSortFilterProxyModel()
+        self.posql_proxy_model.setFilterKeyColumn(0)  # Search all columns.
+        # self.posql_proxy_model.setSourceModel(self.posql_model)
+        self.posql_proxy_model.sort(1, Qt.AscendingOrder)
+        self.filter_table.textChanged.connect(self.posql_proxy_model.setFilterFixedString)
+
+        self.sqlite_proxy_model = QSortFilterProxyModel()
+        self.sqlite_proxy_model.setFilterKeyColumn(1)
+        self.sqlite_proxy_model.setSourceModel(self.sqlite_model)
+        self.sqlite_proxy_model.sort(1, Qt.AscendingOrder)
+
+        self.ui.tableView_db.setModel(self.sqlite_proxy_model)
+        self.filter_table.textChanged.connect(self.sqlite_proxy_model.setFilterFixedString)
+
+        self.filter_table.textChanged.connect(self.search_main_table)
+
+        # File manager
+
+        self.fmanage = QWidget()
+        self.file_manager = Ui_FileManager()
+        self.file_manager.setupUi(self.fmanage)
+        self.file_manager.treeView_source.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.file_manager.treeView_source.setSortingEnabled(True)
+        self.file_manager.treeView_source.sortByColumn(0, Qt.AscendingOrder)
+
+        self.treeView_source_model = QtWidgets.QFileSystemModel()
+        self.treeView_source_model.setRootPath(QDir.rootPath())
+        # self.treeView_source_model.sort(0, Qt.AscendingOrder)
+        self.file_manager.treeView_source.setModel(self.treeView_source_model)
+        self.file_manager.treeView_source.setColumnWidth(0, 300)
+        self.file_manager.treeView_source.hide()
+
+        self.treeView_destination_model = QtWidgets.QFileSystemModel()
+        self.treeView_destination_model.setRootPath(QDir.rootPath())
+        # self.treeView_destination_model.sort(0, Qt.AscendingOrder)
+        self.file_manager.treeView_destination.setModel(self.treeView_destination_model)
+        self.file_manager.treeView_destination.setColumnWidth(0, 300)
+        self.file_manager.treeView_destination.setSortingEnabled(True)
+        self.file_manager.treeView_destination.sortByColumn(0, Qt.AscendingOrder)
+        self.file_manager.listWidget_destination.hide()
+        self.colorizeEffect_wt(self.file_manager.rename_Button)
+        self.colorizeEffect_wt(self.file_manager.undo_rename_Button)
+        self.colorizeEffect_wt(self.file_manager.copy_to_dbButton)
+        self.colorizeEffect_wt(self.file_manager.copy_from_dbButton)
+        self.colorizeEffect_wt(self.file_manager.move_to_dbButton)
+        self.colorizeEffect_wt(self.file_manager.move_from_dbButton)
+        self.norm_tub_style = ('QPushButton{color: white}'
+                               'QPushButton:hover{color: white; background-color: rgba(255,255,255,20)}'
+                               'QPushButton:pressed{color: white; background-color: rgba(255,255,255,40)}')
+        self.selected_tub_style = ('QPushButton{color: white; background-color: rgba(255,255,255,30)}'
+                               'QPushButton:hover{color: white; background-color: rgba(255,255,255,20)}'
+                               'QPushButton:pressed{color: white; background-color: rgba(255,255,255,40)}')
+
+        self.file_manager.comboBox_preset.currentTextChanged.connect(self.set_mask_preset)
+        self.file_manager.mask_full.setText(self.config['Mask_preset']['prst1'])
+        self.mask_preset()
+        self.file_manager.comboBox_digits.addItems(['1', '2', '3', '4', '5', '6', '7', '8', '9'])
+        self.file_manager.comboBox_digits.setCurrentText('1')
+        self.file_manager.comboBox_upper.addItems(['Unchanged', 'all lowercase', 'ALL UPPERCASE',
+                                                   'First letter uppercase', 'First Of Each Word Uppercase'])
+        self.file_manager.comboBox_upper.setCurrentText('Unchanged')
+
+        self.file_manager.source_tub1.clicked.connect(self.source_file_list_manager_b1)
+        self.file_manager.source_tub1.setText(self.config['Tubs_source']['tub1'])
+        self.file_manager.source_tub2.clicked.connect(self.source_file_tree_manager_b2)
+        self.file_manager.source_tub2.setText(self.config['Tubs_source']['tub2'])
+        self.file_manager.source_tub3.clicked.connect(self.source_file_tree_manager_b3)
+        self.file_manager.source_tub3.setText(self.config['Tubs_source']['tub3'])
+        self.file_manager.source_tub4.clicked.connect(self.source_file_tree_manager_b4)
+        self.file_manager.source_tub4.setText(self.config['Tubs_source']['tub4'])
+        self.file_manager.source_tub5.clicked.connect(self.source_file_tree_manager_b5)
+        self.file_manager.source_tub5.setText(self.config['Tubs_source']['tub5'])
+
+        self.file_manager.destination_tub1.clicked.connect(self.destination_file_tree_manager_b1)
+        self.file_manager.destination_tub1.setText(self.config['Tubs_destination']['tub1'])
+        self.file_manager.destination_tub2.clicked.connect(self.destination_file_tree_manager_b2)
+        self.file_manager.destination_tub2.setText(self.config['Tubs_destination']['tub2'])
+        self.file_manager.destination_tub3.clicked.connect(self.destination_file_tree_manager_b3)
+        self.file_manager.destination_tub3.setText(self.config['Tubs_destination']['tub3'])
+        self.file_manager.destination_tub4.clicked.connect(self.destination_file_tree_manager_b4)
+        self.file_manager.destination_tub4.setText(self.config['Tubs_destination']['tub4'])
+        self.file_manager.destination_tub5.clicked.connect(self.destination_file_list_manager_b5)
+        self.file_manager.destination_tub5.setText(self.config['Tubs_destination']['tub5'])
+
+        self.file_manager.mask_name.clicked.connect(self.add_name)
+        self.file_manager.mask_counter.clicked.connect(self.add_counter)
+        self.file_manager.mask_date.clicked.connect(self.add_date)
+        self.file_manager.mask_time.clicked.connect(self.add_time)
+        self.file_manager.mask_full.textChanged.connect(self.destination_file_list_manager_b5)
+        self.file_manager.comboBox_upper.currentTextChanged.connect(self.destination_file_list_manager_b5)
+        self.file_manager.mask_search.textChanged.connect(self.destination_file_list_manager_b5)
+        self.file_manager.mask_replace.textChanged.connect(self.destination_file_list_manager_b5)
+        self.file_manager.spinBox_start.textChanged.connect(self.destination_file_list_manager_b5)
+        self.file_manager.spinBox_step.textChanged.connect(self.destination_file_list_manager_b5)
+        self.file_manager.comboBox_digits.currentTextChanged.connect(self.destination_file_list_manager_b5)
+
+        self.file_manager.rename_Button.setToolTip('Rename all')
+        self.file_manager.undo_rename_Button.setToolTip('Undo Rename all')
+        self.file_manager.copy_to_dbButton.setToolTip('Copy to base')
+        self.file_manager.copy_from_dbButton.setToolTip('Copy from base')
+        self.file_manager.move_to_dbButton.setToolTip('Move to base')
+        self.file_manager.move_from_dbButton.setToolTip('Move from base')
+
+        self.file_manager.rename_Button.clicked.connect(self.file_list_rename)
+        self.file_manager.undo_rename_Button.clicked.connect(self.undo_rename)
+        self.file_manager.copy_to_dbButton.clicked.connect(self.file_list_copy_to)
+        self.file_manager.copy_from_dbButton.clicked.connect(self.file_list_copy_from)
+        self.file_manager.move_to_dbButton.clicked.connect(self.file_list_move_to)
+        self.file_manager.move_from_dbButton.clicked.connect(self.file_list_move_from)
+
+        # START PROGRAM
+        self.db_connect()
+        self.create_db_table()
+
+        # self.file_manager.treeView.customContextMenuRequested.connect(self.context_menu)
+
+    def db_connect(self):
+        try:
+            print(now())
+            print('Подключение к базе данных')
+            DataPos().create_table(self.read_tbl_name())
+        except Exception:
+            dlg = AttentionDialog('Подключение к базе данных не удалось. Проверьте настройки.')
+            dlg.exec()
+            # self.open_settings_window()
+            # self.ui_set.db_posql_host.setCursorPosition(0)
+
+    def create_db_table(self):
+        DataLite().create_table(self.read_tbl_name())
+
+    def write_log(self, log_path, log_info):
+        f = open(log_path, 'w')
+        f.write(log_info)
+        f.close()
+
+    def read_log(self, log_path):
+        f = open(log_path, 'r')
+        log = f.read()
+        f.close()
+        return log
+
+    def mask_preset(self):
+        prst1_name = self.config['Mask_preset']['prst1']
+        prst2_name = self.config['Mask_preset']['prst2']
+        prst3_name = self.config['Mask_preset']['prst3']
+        prst4_name = self.config['Mask_preset']['prst4']
+        self.file_manager.comboBox_preset.addItems([prst1_name, prst2_name, prst3_name, prst4_name])
+        self.file_manager.comboBox_preset.setCurrentText(prst1_name)
+
+    def set_mask_preset(self):
+        current_prst = self.file_manager.comboBox_preset.currentText()
+        self.file_manager.mask_full.setText(current_prst)
+
+    def tree_source_explorer(self):
+        path = ""
+        self.file_manager.treeView_source.setRootIndex(self.treeView_source_model.index(path))
+
+    def file_manage(self):
+        self.fmanage.show()
+        self.source_file_list_manager_b1()
+        self.destination_file_tree_manager_b1()
+
+    def source_file_list_manager_b1(self):
+        self.file_manager.source_tub1.setStyleSheet(self.selected_tub_style)
+        self.file_manager.source_tub2.setStyleSheet(self.norm_tub_style)
+        self.file_manager.source_tub3.setStyleSheet(self.norm_tub_style)
+        self.file_manager.source_tub4.setStyleSheet(self.norm_tub_style)
+        self.file_manager.source_tub5.setStyleSheet(self.norm_tub_style)
+        self.prepare_export_task()
+
+    def source_file_tree_manager_b2(self):
+        self.file_manager.source_tub1.setStyleSheet(self.norm_tub_style)
+        self.file_manager.source_tub2.setStyleSheet(self.selected_tub_style)
+        self.file_manager.source_tub3.setStyleSheet(self.norm_tub_style)
+        self.file_manager.source_tub4.setStyleSheet(self.norm_tub_style)
+        self.file_manager.source_tub5.setStyleSheet(self.norm_tub_style)
+        source_explorer_path = self.config['Tubs_source']['tub2_path']
+        self.file_manager.treeView_source.setRootIndex(self.treeView_source_model.index(source_explorer_path))
+        self.treeView_source_model.setRootPath('')
+        self.treeView_source_model.setRootPath(source_explorer_path)
+        self.file_manager.treeView_source.setSortingEnabled(True)
+        if self.file_manager.listWidget_source.isVisible():
+            self.file_manager.listWidget_source.hide()
+            self.file_manager.treeView_source.show()
+
+    def source_file_tree_manager_b3(self):
+        self.file_manager.source_tub1.setStyleSheet(self.norm_tub_style)
+        self.file_manager.source_tub2.setStyleSheet(self.norm_tub_style)
+        self.file_manager.source_tub3.setStyleSheet(self.selected_tub_style)
+        self.file_manager.source_tub4.setStyleSheet(self.norm_tub_style)
+        self.file_manager.source_tub5.setStyleSheet(self.norm_tub_style)
+        source_explorer_path = self.config['Tubs_source']['tub3_path']
+        self.file_manager.treeView_source.setRootIndex(self.treeView_source_model.index(source_explorer_path))
+        self.treeView_source_model.setRootPath('')
+        self.treeView_source_model.setRootPath(source_explorer_path)
+        self.file_manager.treeView_source.setSortingEnabled(True)
+        if self.file_manager.listWidget_source.isVisible():
+            self.file_manager.listWidget_source.hide()
+            self.file_manager.treeView_source.show()
+
+    def source_file_tree_manager_b4(self):
+        self.file_manager.source_tub1.setStyleSheet(self.norm_tub_style)
+        self.file_manager.source_tub2.setStyleSheet(self.norm_tub_style)
+        self.file_manager.source_tub3.setStyleSheet(self.norm_tub_style)
+        self.file_manager.source_tub4.setStyleSheet(self.selected_tub_style)
+        self.file_manager.source_tub5.setStyleSheet(self.norm_tub_style)
+        source_explorer_path = self.config['Tubs_source']['tub4_path']
+        self.file_manager.treeView_source.setRootIndex(self.treeView_source_model.index(source_explorer_path))
+        self.treeView_source_model.setRootPath('')
+        self.treeView_source_model.setRootPath(source_explorer_path)
+        self.file_manager.treeView_source.setSortingEnabled(True)
+        if self.file_manager.listWidget_source.isVisible():
+            self.file_manager.listWidget_source.hide()
+            self.file_manager.treeView_source.show()
+
+    def source_file_tree_manager_b5(self):
+        self.file_manager.source_tub1.setStyleSheet(self.norm_tub_style)
+        self.file_manager.source_tub2.setStyleSheet(self.norm_tub_style)
+        self.file_manager.source_tub3.setStyleSheet(self.norm_tub_style)
+        self.file_manager.source_tub4.setStyleSheet(self.norm_tub_style)
+        self.file_manager.source_tub5.setStyleSheet(self.selected_tub_style)
+        source_explorer_path = self.config['Tubs_source']['tub5_path']
+        self.file_manager.treeView_source.setRootIndex(self.treeView_source_model.index(source_explorer_path))
+        self.treeView_source_model.setRootPath('')
+        self.treeView_source_model.setRootPath(source_explorer_path)
+        self.file_manager.treeView_source.setSortingEnabled(True)
+        if self.file_manager.listWidget_source.isVisible():
+            self.file_manager.listWidget_source.hide()
+            self.file_manager.treeView_source.show()
+
+    def destination_file_tree_manager_b1(self):
+        self.file_manager.destination_tub1.setStyleSheet(self.selected_tub_style)
+        self.file_manager.destination_tub2.setStyleSheet(self.norm_tub_style)
+        self.file_manager.destination_tub3.setStyleSheet(self.norm_tub_style)
+        self.file_manager.destination_tub4.setStyleSheet(self.norm_tub_style)
+        self.file_manager.destination_tub5.setStyleSheet(self.norm_tub_style)
+        dest_explorer_path = self.config['Tubs_destination']['tub1_path']
+        self.file_manager.treeView_destination.setRootIndex(self.treeView_destination_model.index(dest_explorer_path))
+        self.treeView_destination_model.setRootPath('')
+        self.treeView_destination_model.setRootPath(dest_explorer_path)
+        if self.file_manager.listWidget_destination.isVisible():
+            self.file_manager.listWidget_destination.hide()
+            self.file_manager.treeView_destination.show()
+
+    def destination_file_tree_manager_b2(self):
+        self.file_manager.destination_tub1.setStyleSheet(self.norm_tub_style)
+        self.file_manager.destination_tub2.setStyleSheet(self.selected_tub_style)
+        self.file_manager.destination_tub3.setStyleSheet(self.norm_tub_style)
+        self.file_manager.destination_tub4.setStyleSheet(self.norm_tub_style)
+        self.file_manager.destination_tub5.setStyleSheet(self.norm_tub_style)
+        dest_explorer_path = self.config['Tubs_destination']['tub2_path']
+        self.file_manager.treeView_destination.setRootIndex(self.treeView_destination_model.index(dest_explorer_path))
+        self.treeView_destination_model.setRootPath('')
+        self.treeView_destination_model.setRootPath(dest_explorer_path)
+        self.file_manager.treeView_destination.setSortingEnabled(True)
+        if self.file_manager.listWidget_destination.isVisible():
+            self.file_manager.listWidget_destination.hide()
+            self.file_manager.treeView_destination.show()
+
+    def destination_file_tree_manager_b3(self):
+        self.file_manager.destination_tub1.setStyleSheet(self.norm_tub_style)
+        self.file_manager.destination_tub2.setStyleSheet(self.norm_tub_style)
+        self.file_manager.destination_tub3.setStyleSheet(self.selected_tub_style)
+        self.file_manager.destination_tub4.setStyleSheet(self.norm_tub_style)
+        self.file_manager.destination_tub5.setStyleSheet(self.norm_tub_style)
+        dest_explorer_path = self.config['Tubs_destination']['tub3_path']
+        self.file_manager.treeView_destination.setRootIndex(self.treeView_destination_model.index(dest_explorer_path))
+        self.treeView_destination_model.setRootPath('')
+        self.treeView_destination_model.setRootPath(dest_explorer_path)
+        self.file_manager.treeView_destination.setSortingEnabled(True)
+        if self.file_manager.listWidget_destination.isVisible():
+            self.file_manager.listWidget_destination.hide()
+            self.file_manager.treeView_destination.show()
+
+    def destination_file_tree_manager_b4(self):
+        self.file_manager.destination_tub1.setStyleSheet(self.norm_tub_style)
+        self.file_manager.destination_tub2.setStyleSheet(self.norm_tub_style)
+        self.file_manager.destination_tub3.setStyleSheet(self.norm_tub_style)
+        self.file_manager.destination_tub4.setStyleSheet(self.selected_tub_style)
+        self.file_manager.destination_tub5.setStyleSheet(self.norm_tub_style)
+        dest_explorer_path = self.config['Tubs_destination']['tub4_path']
+        self.file_manager.treeView_destination.setRootIndex(self.treeView_destination_model.index(dest_explorer_path))
+        self.treeView_destination_model.setRootPath('')
+        self.treeView_destination_model.setRootPath(dest_explorer_path)
+        self.file_manager.treeView_destination.setSortingEnabled(True)
+        if self.file_manager.listWidget_destination.isVisible():
+            self.file_manager.listWidget_destination.hide()
+            self.file_manager.treeView_destination.show()
+
+    def destination_file_list_manager_b5(self):
+        self.file_manager.destination_tub1.setStyleSheet(self.norm_tub_style)
+        self.file_manager.destination_tub2.setStyleSheet(self.norm_tub_style)
+        self.file_manager.destination_tub3.setStyleSheet(self.norm_tub_style)
+        self.file_manager.destination_tub4.setStyleSheet(self.norm_tub_style)
+        self.file_manager.destination_tub5.setStyleSheet(self.selected_tub_style)
+        rename_list = self.file_list_rename_view()[1]
+        self.file_manager.listWidget_destination.clear()
+        self.file_manager.listWidget_destination.addItems(rename_list)
+        if self.file_manager.treeView_destination.isVisible():
+            self.file_manager.listWidget_destination.show()
+            self.file_manager.treeView_destination.hide()
+
+
+    def add_name(self):
+        mask = self.file_manager.mask_full.text()
+        self.file_manager.mask_full.setText(mask+'[N]')
+
+    def add_counter(self):
+        counter = self.file_manager.mask_full.text()
+        self.file_manager.mask_full.setText(counter+'[C]')
+
+    def add_date(self):
+        date = self.file_manager.mask_full.text()
+        self.file_manager.mask_full.setText(date+'[dd-mm-yy]')
+
+    def add_time(self):
+        time_ = self.file_manager.mask_full.text()
+        self.file_manager.mask_full.setText(time_+'[hh:mm:ss]')
+
+    def file_list_rename_view(self):
+        items = self.file_manager.listWidget_source
+        old_full_name_list = [items.item(x).text() for x in range(items.count())]
+        new_name_list = []
+        new_full_name_list = []
+        mask = self.file_manager.mask_full.text()
+        counter = self.file_manager.spinBox_start.text()
+        step = self.file_manager.spinBox_step.text()
+        dig = int(self.file_manager.comboBox_digits.currentText())
+        search = self.file_manager.mask_search.text()
+        replace = self.file_manager.mask_replace.text()
+        upper = self.file_manager.comboBox_upper.currentText()
+        for old_name in old_full_name_list:
+            old_name_path = os.path.dirname(old_name)
+            old_name_body = os.path.splitext(os.path.basename(old_name))[0]
+            old_name_ext = os.path.splitext(old_name)[1]
+            new_name = mask.replace('[N]', old_name_body)
+            if '[N' in mask:
+                mask_slice = '['+mask.split('[')[1].split(']')[0]+']'
+                if mask_slice[2].isdigit() and not mask_slice[-2].isdigit():
+                    try:
+                        strt = int(mask_slice.split(']')[0].split('-')[0][2:])-1
+                        new_name = new_name.replace(mask_slice, old_name_body[strt:])
+                    except Exception:
+                        pass
+                if not mask_slice[2].isdigit() and mask_slice[-2].isdigit():
+                    try:
+                        fnsh = int(mask_slice.split(']')[0].split('-')[1])
+                        new_name = new_name.replace(mask_slice, old_name_body[:fnsh])
+                    except Exception:
+                        pass
+                if mask_slice[2].isdigit() and mask_slice[-2].isdigit():
+                    try:
+                        strt = int(mask_slice.split(']')[0].split('-')[0][2:])-1
+                        fnsh = int(mask_slice.split(']')[0].split('-')[1])
+                        new_name = new_name.replace(mask_slice, old_name_body[strt:fnsh])
+                    except Exception:
+                        pass
+
+            new_name = new_name.replace('[C]', f'{int(counter):0{dig}}')
+            new_name = new_name.replace('[dd-mm-yy]', str(datetime.date.today().strftime('%d-%m-%Y')))
+            new_name = new_name.replace('[dd-mm]', str(datetime.date.today().strftime('%d-%m')))
+            new_name = new_name.replace('[mm-yy]', str(datetime.date.today().strftime('%m-%Y')))
+            new_name = new_name.replace('[hh:mm:ss]', str(datetime.datetime.now().strftime('%H:%M:%S')))
+            new_name = new_name.replace('[hh:mm]', str(datetime.datetime.now().strftime('%H:%M')))
+            if search != '':
+                new_name = new_name.replace(search, replace)
+            if upper == 'all lowercase':
+                new_name = new_name.lower()
+            if upper == 'ALL UPPERCASE':
+                new_name = new_name.upper()
+            if upper == 'First letter uppercase':
+                new_name = new_name.capitalize()
+            if upper == 'First Of Each Word Uppercase':
+                new_name = new_name.title()
+            new_name_full = old_name_path+'/'+new_name+old_name_ext
+            new_full_name_list.append(new_name_full)
+            new_name = new_name + old_name_ext
+            new_name_list.append(new_name)
+            counter = int(counter) + int(step)
+        return old_full_name_list, new_name_list, new_full_name_list
+
+    def file_list_rename(self):
+        tbl_name = self.read_tbl_name()
+        old_full_name_list = self.file_list_rename_view()[0]
+        new_full_name_list = self.file_list_rename_view()[2]
+        log = f'{old_full_name_list}, {new_full_name_list}'
+        log_path = os.path.join(self.parent_directory, 'logs', 'rename_list.txt')
+        self.write_log(log_path, log)
+        if 'Not selected' not in old_full_name_list:
+            for i in range(len(old_full_name_list)):
+                old_file_path = old_full_name_list[i]
+                new_file_path = new_full_name_list[i]
+                try:
+                    os.rename(old_file_path, new_file_path)
+                    if self.selected_db == 'SQLITE':
+                        DataLite().update_data(tbl_name, old_file_path, new_file_path)
+                    else:
+                        DataPos().update_data(tbl_name, old_file_path, new_file_path)
+                    self.file_manager.listWidget_source.item(i).setText(new_file_path)
+                    row_count = self.ui.tableWidget_01.rowCount()
+                    for row in range(row_count):
+                        if self.ui.tableWidget_01.item(row, 0).text() == old_file_path:
+                            item = QTableWidgetItem()
+                            item.setData(Qt.EditRole, new_file_path)
+                            self.ui.tableWidget_01.setItem(row, 0, item)
+                except Exception:
+                    message_text = (f'Error, could not rename\n'
+                                    f'{old_file_path} -> {old_file_path}')
+                    dlg = AttentionDialog(message_text)
+                    dlg.exec()
+                    break
+
+    def undo_rename(self):
+        log_path = os.path.join(self.parent_directory, 'logs', 'rename_list.txt')
+        rename_list = ast.literal_eval(self.read_log(log_path))
+        old_full_name_list = rename_list[1]
+        new_full_name_list = rename_list[0]
+        tbl_name = self.read_tbl_name()
+        for i in range(len(old_full_name_list)):
+            old_file_path = old_full_name_list[i]
+            new_file_path = new_full_name_list[i]
+            try:
+                os.rename(old_file_path, new_file_path)
+                if self.selected_db == 'SQLITE':
+                    DataLite().update_data(tbl_name, old_file_path, new_file_path)
+                else:
+                    DataPos().update_data(tbl_name, old_file_path, new_file_path)
+                self.file_manager.listWidget_source.item(i).setText(new_file_path)
+                row_count = self.ui.tableWidget_01.rowCount()
+                for row in range(row_count):
+                    if self.ui.tableWidget_01.item(row, 0).text() == old_file_path:
+                        item = QTableWidgetItem()
+                        item.setData(Qt.EditRole, new_file_path)
+                        self.ui.tableWidget_01.setItem(row, 0, item)
+            except Exception:
+                message_text = (f'Error, could not undo rename\n'
+                                f'{old_file_path} -> {old_file_path}')
+                dlg = AttentionDialog(message_text)
+                dlg.exec()
+                break
+
+    def file_list_copy_to(self):
+        tbl_name = self.read_tbl_name()
+        self.file_manager.progressBar.setValue(0)
+        if self.file_manager.listWidget_source.isVisible():
+            items = self.file_manager.listWidget_source
+            file_list = [items.item(x).text() for x in range(items.count())]
+        else:
+            indexes = self.file_manager.treeView_source.selectedIndexes()
+            file_list = [self.treeView_source_model.filePath(index) for index in indexes if index.column() == 0]
+        destination_file_path = self.treeView_destination_model.rootPath()
+        total_files = len(file_list)
+        for i, file_path in enumerate(file_list):
+            self.file_manager.progressBar.setValue((i+1)/total_files*100)
+            QApplication.processEvents()
+            shutil.copy(file_path, destination_file_path)
+            new_file_path = os.path.join(destination_file_path, os.path.basename(file_path))
+            if self.selected_db == 'SQLITE':
+                DataLite().update_data(tbl_name, file_path, new_file_path)
+            else:
+                DataPos().update_data(tbl_name, file_path, new_file_path)
+            # self.file_manager.listWidget_source.selectedItems()
+            self.file_manager.listWidget_source.takeItem(0)
+            row_count = self.ui.tableWidget_01.rowCount()
+            for row in range(row_count):
+                if self.ui.tableWidget_01.item(row, 0).text() == file_path:
+                    self.ui.tableWidget_01.removeRow(row)
+                    break
+            print(file_path, 'copied')
+        self.file_manager.progressBar.setValue(100)
+
+    def file_list_copy_from(self):
+        tbl_name = self.read_tbl_name()
+        self.file_manager.progressBar.setValue(0)
+        indexes = self.file_manager.treeView_destination.selectedIndexes()
+        file_list = [self.treeView_destination_model.filePath(index) for index in indexes if index.column() == 0]
+        destination_file_path = self.treeView_source_model.rootPath()
+        total_files = len(file_list)
+        for i, file_path in enumerate(file_list):
+            self.file_manager.progressBar.setValue((i+1)/total_files*100)
+            QApplication.processEvents()
+            shutil.copy(file_path, destination_file_path)
+            new_file_path = os.path.join(destination_file_path, os.path.basename(file_path))
+            if self.selected_db == 'SQLITE':
+                DataLite().update_data(tbl_name, file_path, new_file_path)
+            else:
+                DataPos().update_data(tbl_name, file_path, new_file_path)
+            # self.file_manager.listWidget_source.selectedItems()
+            # self.file_manager.listWidget_source.takeItem(0)
+            print(file_path, 'copied')
+        self.file_manager.progressBar.setValue(100)
+
+    def file_list_move_to(self):
+        tbl_name = self.read_tbl_name()
+        self.file_manager.progressBar.setValue(0)
+        if self.file_manager.listWidget_source.isVisible():
+            items = self.file_manager.listWidget_source
+            file_list = [items.item(x).text() for x in range(items.count())]
+        else:
+            indexes = self.file_manager.treeView_source.selectedIndexes()
+            file_list = [self.treeView_source_model.filePath(index) for index in indexes if index.column() == 0]
+        destination_file_path = self.treeView_destination_model.rootPath()
+        total_files = len(file_list)
+        for i, file_path in enumerate(file_list):
+            self.file_manager.progressBar.setValue((i+1)/total_files*100)
+            QApplication.processEvents()
+            shutil.move(file_path, destination_file_path)
+            new_file_path = os.path.join(destination_file_path, os.path.basename(file_path))
+            if self.selected_db == 'SQLITE':
+                DataLite().update_data(tbl_name, file_path, new_file_path)
+            else:
+                DataPos().update_data(tbl_name, file_path, new_file_path)
+            # self.file_manager.listWidget_source.selectedItems()
+            self.file_manager.listWidget_source.takeItem(0)
+            row_count = self.ui.tableWidget_01.rowCount()
+            for row in range(row_count):
+                if self.ui.tableWidget_01.item(row, 0).text() == file_path:
+                    self.ui.tableWidget_01.removeRow(row)
+                    break
+            print(file_path, 'moved')
+        self.file_manager.progressBar.setValue(100)
+
+    def file_list_move_from(self):
+        tbl_name = self.read_tbl_name()
+        self.file_manager.progressBar.setValue(0)
+        indexes = self.file_manager.treeView_destination.selectedIndexes()
+        file_list = [self.treeView_destination_model.filePath(index) for index in indexes if index.column() == 0]
+        destination_file_path = self.treeView_source_model.rootPath()
+        total_files = len(file_list)
+        for i, file_path in enumerate(file_list):
+            self.file_manager.progressBar.setValue((i+1)/total_files*100)
+            QApplication.processEvents()
+            shutil.move(file_path, destination_file_path)
+            new_file_path = os.path.join(destination_file_path, os.path.basename(file_path))
+            if self.selected_db == 'SQLITE':
+                DataLite().update_data(tbl_name, file_path, new_file_path)
+            else:
+                DataPos().update_data(tbl_name, file_path, new_file_path)
+            # self.file_manager.listWidget_source.selectedItems()
+            # self.file_manager.listWidget_source.takeItem(0)
+            print(file_path, 'moved')
+        self.file_manager.progressBar.setValue(100)
+
+    def prepare_export_task(self):
+        tbl_file_list = self.selected_file_list()
+        self.file_manager.listWidget_source.clear()
+        self.file_manager.listWidget_source.addItems(tbl_file_list)
+        if self.file_manager.treeView_source.isVisible():
+            self.file_manager.listWidget_source.show()
+            self.file_manager.treeView_source.hide()
+        if not self.file_manager.listWidget_source.item(0):
+            self.file_manager.listWidget_source.clear()
+            self.file_manager.listWidget_source.addItem('Not selected')
+            self.file_manager.listWidget_source.setEnabled(False)
+            self.file_manager.listWidget_source.setStyleSheet('color: grey; font: italic')
+            self.file_manager.listWidget_destination.setEnabled(False)
+            self.file_manager.listWidget_destination.setStyleSheet('color: grey; font: italic')
+        else:
+            self.file_manager.listWidget_source.setEnabled(True)
+            self.file_manager.listWidget_source.setStyleSheet('color: white; font: regular')
+            self.file_manager.listWidget_destination.setEnabled(True)
+            self.file_manager.listWidget_destination.setStyleSheet('color: white; font: regular')
+    def search_main_table(self, s):
+        self.ui.tableWidget_01.setCurrentItem(None)
+        if not s:
+            return
+        matching_items = self.ui.tableWidget_01.findItems(s, Qt.MatchContains)
+        # print(matching_items)
+        # rows = self.ui.tableWidget_01.rowCount()
+        if matching_items:
+            for match in matching_items:
+                if match.column() == 1:
+                    match.setSelected(True)
+                # search_row = match.row()
+                # for row in range(rows):
+                #     # self.ui.tableWidget_01.hideRow(row)
+                #     self.ui.tableWidget_01.showRow(search_row)
+        else:
+            pass
+            # for row in range(rows):
+            #     self.ui.tableWidget_01.showRow(row)
+
+
+    def read_config(self, sect, key):
+        return self.config[sect][key]
+
+    def write_config(self):
+        with open(self.settings_name, 'w') as configfile:
+            self.config.write(configfile)
+
+    def select_db(self):
+        if self.selected_db == 'SQLITE':
+            self.ui.move_to_dbButton.hide()
+            headers = DataPos().read_all_headers(self.read_tbl_name())
+            data = DataPos().read_all_data(self.read_tbl_name())
+            self.posql_model = TableModel(headers, data)
+            self.posql_proxy_model.setSourceModel(self.posql_model)
+            self.ui.tableView_db.setModel(self.posql_proxy_model)
+
+            self.ui.tableView_db.hideColumn(0)
+            self.ui.tableView_db.setColumnWidth(1, 400)
+
+            self.selected_db = 'POSQL'
+            # self.colorizeEffect_rd(self.choose_base_btn)
+            self.choose_base_btn.setStyleSheet(self.choose_btn_style_red)
+            # self.ui.tableView_db.setStyleSheet("QTableView{border: 1px solid red; border-radius:3px;}")
+            # print(self.selected_db)
+        else:
+            self.ui.move_to_dbButton.show()
+            self.ui.tableView_db.setModel(self.sqlite_proxy_model)
+
+            self.sqlite_model.setTable(self.read_tbl_name())
+            self.sqlite_model.select()
+            self.ui.tableView_db.hideColumn(0)
+            self.ui.tableView_db.setColumnWidth(1, 400)
+
+            self.selected_db = 'SQLITE'
+            self.choose_base_btn.setStyleSheet(self.choose_btn_style_wt)
+            # self.colorizeEffect_wt(self.choose_base_btn)
+            # self.ui.tableView_db.setStyleSheet("QTableView{border: 1px solid grey; border-radius:3px;}")
+            # print(self.selected_db)
+
+    def update_db_table(self):
+        if self.selected_db == 'SQLITE':
+            self.sqlite_model.setTable(self.read_tbl_name())
+            self.sqlite_model.select()
+            self.create_db_table()
+
+            self.ui.tableView_db.hideColumn(0)
+            self.ui.tableView_db.setColumnWidth(1, 400)
+            self.check_table_bd()
+        else:
+            headers = DataPos().read_all_headers(self.read_tbl_name())
+            data = DataPos().read_all_data(self.read_tbl_name())
+            self.posql_model = TableModel(headers, data)
+            self.posql_proxy_model.setSourceModel(self.posql_model)
+            self.ui.tableView_db.setModel(self.posql_proxy_model)
+
+            self.ui.tableView_db.hideColumn(0)
+            self.ui.tableView_db.setColumnWidth(1, 400)
+            self.check_table_bd()
+
+
+
+
+    def read_tbl_name(self):
+        tbl_name = self.choose_table_cmbx.currentText()
+        return tbl_name
+
+    def reset_mediainfo_tbl_01(self):
+        file_list = self.selected_file_list()
+        for file_path in file_list:
+            if self.selected_db == 'SQLITE':
+                DataLite().reset_data(self.read_tbl_name(), file_path)
+            else:
+                DataPos().reset_data(self.read_tbl_name(), file_path)
+        self.add_table_r128()
+        self.add_table_black()
+        self.add_table_silence()
+        self.add_table_freeze()
+
+    def reset_mediainfo_db(self):
+        file_list = self.selected_db_file_list()
+        for file_path in file_list:
+            if self.selected_db == 'SQLITE':
+                DataLite().reset_data(self.read_tbl_name(), file_path)
+            else:
+                DataPos().reset_data(self.read_tbl_name(), file_path)
+        self.update_db_table()
+
+    def clear_mediainfo(self):
+        file_list = self.selected_file_list()
+        for file_path in file_list:
+            if self.selected_db == 'SQLITE':
+                DataLite().delete_data(self.read_tbl_name(), file_path)
+            else:
+                DataPos().delete_data(self.read_tbl_name(), file_path)
+        self.del_selected_rows()
+
+    def del_file_from_db(self):
+        file_list = self.selected_db_file_list()
+        for file_path in file_list:
+            self.confirm_the_action(file_path)
+            #     if self.selected_db == 'SQLITE':
+            #         DataLite().delete_data(self.read_tbl_name(), file_path)
+            #     else:
+            #         DataPos().delete_data(self.read_tbl_name(), file_path)
+            # else:
+            #     break
+
+    def confirm_the_action(self, file_path):
+        message_text = (f'Are you sure you want to delete the file\n{file_path} ?')
+        dlg = CustomDialog(message_text)
+        # dlg.setText(f'Are you sure you want to delete the file\n{file_path}?')
+        if dlg.exec():
+            if self.selected_db == 'SQLITE':
+                DataLite().delete_data(self.read_tbl_name(), file_path)
+            else:
+                DataPos().delete_data(self.read_tbl_name(), file_path)
+            index = self.ui.tableView_db.selectionModel().currentIndex()
+            self.ui.tableView_db.selectRow(index.row())
+            self.update_db_table()
+
+        else:
+            print("Cancel!")
+        self.check_table_bd()
+        # print("click")
+        #
+        # dlg = CustomDialog()
+        # if dlg.exec():
+        #     print("Success!")
+        # else:
+        #     print("Cancel!")
+        # reply = QMessageBox.question(self, 'Закрытие приложения', "Вы уверены, что хотите уйти?", QMessageBox.Yes, QMessageBox.No)
+        #
+        #  if reply == QMessageBox.Yes:
+        #      event.accept()
+        #  else:
+        #      event.ignore()
+        # action = False
+        # self.conf_action.show()
+        # self.conf_dialog.conf_label.setText(f'Are you sure you want to delete the file\n{data}?')
+        # if self.conf_dialog.yesButton.isChecked():
+        #     action = True
+        # elif self.conf_dialog.cancelButton.isChecked():
+        #     action = False
+        # return action
+        # self.conf_action.setWindowTitle()
+        # QMessageBox.about(self, "Message Box Title", "Informative Message Content")
 
     def switch_tools(self):
         button_style_min = ("QToolButton{color: rgb(255, 255, 255);"
@@ -378,6 +1247,24 @@ class VideoInfo(QMainWindow):
         min_icon.addFile(u":/bl_img/icons/menu_FILL0_wght400_GRAD0_opsz24.svg", QSize(), QIcon.Normal, QIcon.Off)
         if not self.switch_tool_flag:
             self.ui.buttons.setMinimumSize(185, 0)
+
+            self.ui.move_to_tableButton.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+            self.ui.move_to_tableButton.setMinimumSize(180, 30)
+            self.ui.move_to_tableButton.setToolTip('')
+            self.ui.move_to_tableButton.setText('  Move to table')
+            self.ui.move_to_tableButton.setStyleSheet(button_style_max)
+
+            self.ui.delete_from_dbButton.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+            self.ui.delete_from_dbButton.setMinimumSize(180, 30)
+            self.ui.delete_from_dbButton.setToolTip('')
+            self.ui.delete_from_dbButton.setText('  Delete from DB')
+            self.ui.delete_from_dbButton.setStyleSheet(button_style_max)
+
+            self.ui.move_to_dbButton.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+            self.ui.move_to_dbButton.setMinimumSize(180, 30)
+            self.ui.move_to_dbButton.setToolTip('')
+            self.ui.move_to_dbButton.setText('  Move to DB')
+            self.ui.move_to_dbButton.setStyleSheet(button_style_max)
 
             self.ui.addButton.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
             self.ui.addButton.setMinimumSize(180, 30)
@@ -433,6 +1320,12 @@ class VideoInfo(QMainWindow):
             self.ui.fullDtctButton.setText('  Start Full scan')
             self.ui.fullDtctButton.setStyleSheet(button_style_max)
 
+            self.ui.migrateButton.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+            self.ui.migrateButton.setMinimumSize(180, 30)
+            self.ui.migrateButton.setToolTip('')
+            self.ui.migrateButton.setText('  Copy and Rename')
+            self.ui.migrateButton.setStyleSheet(button_style_max)
+
             self.ui.exportButton.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
             self.ui.exportButton.setMinimumSize(180, 30)
             self.ui.exportButton.setToolTip('')
@@ -455,6 +1348,22 @@ class VideoInfo(QMainWindow):
             self.ui.switchToolButton.setIcon(max_icon)
             self.switch_tool_flag = True
         else:
+            self.ui.buttons.setMinimumSize(46, 0)
+            self.ui.move_to_tableButton.setToolButtonStyle(Qt.ToolButtonIconOnly)
+            self.ui.move_to_tableButton.setMinimumSize(40, 30)
+            self.ui.move_to_tableButton.setToolTip('Добавить файл в таблицу')
+            self.ui.move_to_tableButton.setStyleSheet(button_style_min)
+
+            self.ui.delete_from_dbButton.setToolButtonStyle(Qt.ToolButtonIconOnly)
+            self.ui.delete_from_dbButton.setMinimumSize(40, 30)
+            self.ui.delete_from_dbButton.setToolTip('Переместить выбранное в основную базу данных')
+            self.ui.delete_from_dbButton.setStyleSheet(button_style_min)
+
+            self.ui.move_to_dbButton.setToolButtonStyle(Qt.ToolButtonIconOnly)
+            self.ui.move_to_dbButton.setMinimumSize(40, 30)
+            self.ui.move_to_dbButton.setToolTip('Удалить файл из базы')
+            self.ui.move_to_dbButton.setStyleSheet(button_style_min)
+
             self.ui.buttons.setMinimumSize(46, 0)
             self.ui.addButton.setToolButtonStyle(Qt.ToolButtonIconOnly)
             self.ui.addButton.setMinimumSize(40, 30)
@@ -501,6 +1410,11 @@ class VideoInfo(QMainWindow):
             self.ui.fullDtctButton.setToolTip('Полное сканирование')
             self.ui.fullDtctButton.setStyleSheet(button_style_min)
 
+            self.ui.migrateButton.setToolButtonStyle(Qt.ToolButtonIconOnly)
+            self.ui.migrateButton.setMinimumSize(40, 30)
+            self.ui.migrateButton.setToolTip('Копирование и переименование')
+            self.ui.migrateButton.setStyleSheet(button_style_min)
+
             self.ui.exportButton.setToolButtonStyle(Qt.ToolButtonIconOnly)
             self.ui.exportButton.setMinimumSize(40, 30)
             self.ui.exportButton.setToolTip('Экспорт базы данных в Excel')
@@ -530,6 +1444,11 @@ class VideoInfo(QMainWindow):
         color.setColor(qRgb(80, 80, 80))
         button.setGraphicsEffect(color)
 
+    def colorizeEffect_dgr(self, button):
+        color = QGraphicsColorizeEffect(self)
+        color.setColor(qRgb(35, 35, 35))
+        button.setGraphicsEffect(color)
+
     def colorizeEffect_rd(self, button):
         color = QGraphicsColorizeEffect(self)
         color.setColor(Qt.red)
@@ -553,53 +1472,6 @@ class VideoInfo(QMainWindow):
             self.ui.frame_wave.show()
             self.ui.actionShow_Loudness.setText('Hide Loudness meter')
 
-    # def closeEvent(self, event):  # When the form is closed
-    #     # The playback cannot be stopped automatically when the window is closed, it needs to be stopped manually
-    #     if (self.player.state() == QMediaPlayer.PlayingState):
-    #         self.player.stop()
-
-    # self.volumeslider.setToolTip("Volume")
-    # self.hbuttonbox.addWidget(self.volumeslider)
-    # self.volumeslider.valueChanged.connect(self.set_volume)
-
-    # self.info_win.setObjectName("info_win")
-    # self.info_win.setGeometry(QRect(500, 500, 300, 100))
-    # self.info_win.setWindowTitle('Внимание!')
-
-    # self.info_label = QLabel(self.info_win)
-    # self.info_label.setObjectName("info_label")
-    # self.info_label.setText('Запущено сканирование')
-
-    # self.info_label.setGeometry(QRect(50, 10, 121, 21))
-
-    # def clear_pressed(self):
-    #     self.last_pressed = None
-    #
-    # def keyPressEvent(self, event):
-    #     self.pressedKeys[event.key()] = True
-    #     if self.timer.isActive():
-    #         if self.last_pressed == event.key():
-    #             self.timer.stop()
-    #     else:
-    #         self.timer.start(200)
-    #     self.last_pressed = event.key()
-    #     self.keyAction()
-    #
-    # def keyReleaseEvent(self, event):
-    #     self.pressedKeys[event.key()] = False
-    #     self.keyAction()
-    #
-    # def keyAction(self):
-    #     if self.pressedKeys[Qt.Key_Left]:
-    #         print('left')
-    #     if self.pressedKeys[Qt.Key_Right]:
-    #         print('right')
-    #     if self.pressedKeys[Qt.Key_Up]:
-    #         print('up')
-    #     if self.pressedKeys[Qt.Key_Down]:
-    #         print('down')
-    # def menu_bar(self):
-    #     self.menuFile
 
     def table_key_press_event(self, event):
         QtWidgets.QTableWidget.keyPressEvent(self.ui.tableWidget_01, event)
@@ -609,13 +1481,13 @@ class VideoInfo(QMainWindow):
         #     print('right')
         if event.key() == Qt.Key_Up:
             try:
-                self.click_table()
+                self.click_table_w()
             except Exception:
                 pass
             # print('up')
         elif event.key() == Qt.Key_Down:
             try:
-                self.click_table()
+                self.click_table_w()
             except Exception:
                 pass
         elif event.key() == Qt.Key_Escape:
@@ -623,6 +1495,58 @@ class VideoInfo(QMainWindow):
                 self.ui.tableWidget_01.clearSelection()
             except Exception:
                 pass
+
+
+
+    def table_mouse_key_press_event(self, event):
+        QtWidgets.QTableWidget.mousePressEvent(self.ui.tableWidget_01, event)
+
+        if event.button() == Qt.LeftButton:
+            pass
+            # print("Left Button Clicked")
+
+        elif event.button() == Qt.RightButton:
+            # self.table_01_right_click(event)
+            if self.ui.tableWidget_01.rowCount() == 0:
+                self.table_01_right_click_min()
+            else:
+                self.table_01_right_click_max()
+            # print("Right button clicked")
+
+    def table_db_key_press_event(self, event):
+        QtWidgets.QTableView.keyPressEvent(self.ui.tableView_db, event)
+        # if event.key() == Qt.Key_Left:
+        #     print('left')
+        # elif event.key() == Qt.Key_Right:
+        #     print('right')
+        if event.key() == Qt.Key_Up:
+            try:
+                self.click_table_db()
+            except Exception:
+                pass
+            # print('up')
+        elif event.key() == Qt.Key_Down:
+            try:
+                self.click_table_db()
+            except Exception:
+                pass
+        elif event.key() == Qt.Key_Escape:
+            try:
+                self.ui.tableView_db.clearSelection()
+            except Exception:
+                pass
+
+    def table_db_mouse_key_press_event(self, event):
+        QtWidgets.QTableView.mousePressEvent(self.ui.tableView_db, event)
+        if event.button() == Qt.LeftButton:
+            pass
+            # print("Left Button Clicked")
+
+        elif event.button() == Qt.RightButton:
+            if self.sqlite_model.rowCount() == 0:
+                self.table_db_right_click_min()
+            else:
+                self.table_db_right_click_max()
 
     # def vido_player_press_event(self, event):
     #     QtWidgets.QDialog.keyPressEvent(self.vinfo_player, event)
@@ -645,35 +1569,52 @@ class VideoInfo(QMainWindow):
     def open_settings_window(self):
         self.save_temp_settings_main()
         self.save_temp_settings_damage()
+        self.save_temp_settings_db()
         self.settings.show()
 
     def switch_db_editor(self):
-        # self.update_db_editor()
+        self.update_db_table()
         if self.ui.tableWidget_01.isVisible():
-            self.model.select()
+            self.check_table_bd()
             self.ui.tableWidget_01.hide()
             self.ui.tableView_db.show()
+            self.ui.move_to_tableButton.show()
+            self.ui.delete_from_dbButton.show()
+            self.ui.move_to_dbButton.show()
+
+            self.ui.addButton.hide()
+            self.ui.delButton.hide()
 
             self.ui.r128DtctButton.hide()
             self.ui.blckDtctButton.hide()
             self.ui.slncDtctButton.hide()
             self.ui.frzDtctButton.hide()
             self.ui.fullDtctButton.hide()
+            self.filter_table.setPlaceholderText("Search...")
+            # self.ui.toolBar.show()
 
         else:
             self.ui.tableWidget_01.show()
             self.ui.tableView_db.hide()
+            self.ui.addButton.show()
+            self.ui.delButton.show()
+            self.ui.move_to_tableButton.hide()
+            self.ui.delete_from_dbButton.hide()
+            self.ui.move_to_dbButton.hide()
 
             self.ui.r128DtctButton.show()
             self.ui.blckDtctButton.show()
             self.ui.slncDtctButton.show()
             self.ui.frzDtctButton.show()
             self.ui.fullDtctButton.show()
+            self.filter_table.setPlaceholderText("Filter...")
+            # self.ui.toolBar.hide()
+
 
     def update_db_editor(self):
         tbl_name = self.db_settings.db_list.currentText()
         # tbl_name = 'Video'
-        self.model.setTable(f'{tbl_name}')
+        self.sqlite_model.setTable(self.read_tbl_name())
         # self.model.select()
 
     def open_db(self):
@@ -686,16 +1627,40 @@ class VideoInfo(QMainWindow):
         connection.close()
         print('Соединение закрыто')
 
-
     def export_db_xlsx(self):
-        Data().export_xlsx()
+        if self.selected_db == 'SQLITE':
+            DataLite().export_db_to_xlsx()
+        else:
+            DataPos().export_xlsx()
+
+    def export_tbl_xlsx(self):
+        if self.selected_db == 'SQLITE':
+            DataLite().export_tbl_to_xlsx(self.read_tbl_name())
+        else:
+            DataPos().export_tbl_to_xlsx(self.read_tbl_name())
 
     # def close_settings_window(self):
     #     self.settings.close()
+
+    def update_ffprobe(self):
+        file_list = self.selected_file_list()
+        for file_path in file_list:
+            if self.selected_db == 'SQLITE':
+                DataLite().delete_data(self.read_tbl_name(), file_path)
+            else:
+                DataPos().delete_data(self.read_tbl_name(), file_path)
+        self.del_selected_rows()
+        progress_dialog = self.progress_bar()
+        if self.start_ffprobe(file_list, progress_dialog):
+            self.progress_dialog_tbl_start(file_list)
+
     def show_db_tables(self):
         self.db_settings.db_list.clear()
         # self.db_tables = QtWidgets.QDialog()
-        tbl_list = Data().show_all_tbl()
+        if self.selected_db == 'SQLITE':
+            tbl_list = DataLite().show_all_tbl()
+        else:
+            tbl_list = DataPos().show_all_tbl()
         # self.db_tables.resize(400, 200)
 
         # self.save_button = QPushButton(self.db_tables)
@@ -733,55 +1698,89 @@ class VideoInfo(QMainWindow):
     def create_new_db(self):
         db_name, check = QFileDialog.getSaveFileName(None, "Create Base", "new_database.db", "Docu Base (*.db)")
         if check:
-            Data().create_database(db_name)
+            if self.selected_db == 'SQLITE':
+                DataLite().create_table(self.read_tbl_name())
+            else:
+                DataPos().create_table(self.read_tbl_name())
 
+    def check_connection_posql_db(self):
+        self.save_temp_settings_db()
+        self.ui_set.chck_con_posql_label.setText(DataPos().check_connect())
+
+    def check_connection_sqlite_db(self):
+        self.save_temp_settings_db()
+        self.ui_set.chck_con_sqlite_label.setText(DataLite().check_connect())
     def save_butt_settings(self):
         self.save_temp_settings_main()
         self.save_temp_settings_damage()
+        self.save_temp_settings_db()
         self.error_highlight()
         self.settings.close()
 
     def cancel_butt_settings(self):
-        self.call_temp_settings_main()
-        self.call_temp_settings_damage()
+        self.base_settings_main()
+        self.base_settings_damage()
+        self.base_settings_db()
+        # self.call_temp_settings_main()
+        # self.call_temp_settings_damage()
         self.error_highlight()
         self.settings.close()
 
-    def base_settings_main(self):
-        self.ui_set.codec_txt.setText('h264')
-        self.ui_set.width_txt.setText('1920')
-        self.ui_set.height_txt.setText('1080')
-        self.ui_set.v_bit_rate_txt.setText('6')
-        self.ui_set.frame_rate_comboBox.addItems(['23.976', '24', '25', '29.97', '30'])
-        self.ui_set.frame_rate_comboBox.setCurrentText('25')
-        self.ui_set.dar_comboBox.addItems(['4:3', '16:9'])
-        self.ui_set.dar_comboBox.setCurrentText('16:9')
-        self.ui_set.codec_aud_txt.setText('aac')
-        self.ui_set.channels_txt.setText('2')
-        self.ui_set.sample_rate_comboBox.addItems(['44.1', '48.0', '96.0'])
-        self.ui_set.sample_rate_comboBox.setCurrentText('48.0')
-        self.ui_set.a_bit_rate_txt.setText('320')
+    def base_settings_db(self):
+        self.ui_set.db_posql_host.setText(self.config['Posql']['host'])
+        self.ui_set.db_posql_dbname.setText(self.config['Posql']['database'])
+        self.ui_set.db_posql_user.setText(self.config['Posql']['user'])
+        self.ui_set.db_posql_password.setText(self.config['Posql']['password'])
+        self.ui_set.db_posql_port.setText(self.config['Posql']['port'])
 
-        self.ui_set.r128_i_txt.setText('-23')
-        self.ui_set.r128_lra_txt.setText('11')
-        self.ui_set.r128_tp_txt.setText('-2')
-        self.ui_set.r128_thr_txt.setText('0')
+        self.ui_set.db_sqlite_dbname.setText(self.config['Sqlite']['database'])
+    def save_temp_settings_db(self):
+        self.config['Posql']['host'] = self.ui_set.db_posql_host.text()
+        self.config['Posql']['database'] = self.ui_set.db_posql_dbname.text()
+        self.config['Posql']['user'] = self.ui_set.db_posql_user.text()
+        self.config['Posql']['password'] = self.ui_set.db_posql_password.text()
+        self.config['Posql']['port'] = self.ui_set.db_posql_port.text()
+
+        self.config['Sqlite']['database'] = self.ui_set.db_sqlite_dbname.text()
+        self.write_config()
+    def base_settings_main(self):
+        self.ui_set.presetComboBox.addItems(ast.literal_eval(self.config['Presets']['name_combobox']))
+        self.ui_set.presetComboBox.setCurrentText(self.config['Presets']['name'])
+        self.ui_set.presetComboBox.setStyleSheet('color:grey')
+        self.ui_set.codec_txt.setText(self.config['Video_standard']['codec'])
+        self.ui_set.width_txt.setText(self.config['Video_standard']['width'])
+        self.ui_set.height_txt.setText(self.config['Video_standard']['height'])
+        self.ui_set.v_bit_rate_txt.setText(self.config['Video_standard']['v_bit_rate'])
+        self.ui_set.frame_rate_comboBox.addItems(ast.literal_eval(self.config['Video_standard']['frame_rate_comboBox']))
+        self.ui_set.frame_rate_comboBox.setCurrentText(self.config['Video_standard']['frame_rate'])
+        self.ui_set.dar_comboBox.addItems(ast.literal_eval(self.config['Video_standard']['dar_combobox']))
+        self.ui_set.dar_comboBox.setCurrentText(self.config['Video_standard']['dar'])
+        self.ui_set.codec_aud_txt.setText(self.config['Audio_standard']['codec_aud'])
+        self.ui_set.channels_txt.setText(self.config['Audio_standard']['channels'])
+        self.ui_set.sample_rate_comboBox.addItems(ast.literal_eval(self.config['Audio_standard']['sample_rate_combobox']))
+        self.ui_set.sample_rate_comboBox.setCurrentText(self.config['Audio_standard']['sample_rate'])
+        self.ui_set.a_bit_rate_txt.setText(self.config['Audio_standard']['a_bit_rate'])
+
+        self.ui_set.r128_i_txt.setText(self.config['Loudness_meter']['r128_i'])
+        self.ui_set.r128_lra_txt.setText(self.config['Loudness_meter']['r128_lra'])
+        self.ui_set.r128_tp_txt.setText(self.config['Loudness_meter']['r128_tp'])
+        self.ui_set.r128_thr_txt.setText(self.config['Loudness_meter']['r128_thr'])
 
     def base_settings_damage(self):
-        self.ui_set.blck_dur_txt.setText('2')
-        self.ui_set.blck_thr_txt.setText('0.1')
-        self.ui_set.blck_tc_in.setText('00:00:00')
-        self.ui_set.blck_tc_out.setText('00:00:00')
+        self.ui_set.blck_dur_txt.setText(self.config['Damage_test_black']['blck_dur'])
+        self.ui_set.blck_thr_txt.setText(self.config['Damage_test_black']['blck_thr'])
+        self.ui_set.blck_tc_in.setText(self.config['Damage_test_black']['blck_tc_in'])
+        self.ui_set.blck_tc_out.setText(self.config['Damage_test_black']['blck_tc_out'])
 
-        self.ui_set.slnc_dur_txt.setText('2')
-        self.ui_set.slnc_noize_txt.setText('-40')
-        self.ui_set.slnc_tc_in.setText('00:00:00')
-        self.ui_set.slnc_tc_out.setText('00:00:00')
+        self.ui_set.slnc_dur_txt.setText(self.config['Damage_test_silence']['slnc_dur'])
+        self.ui_set.slnc_noize_txt.setText(self.config['Damage_test_silence']['slnc_noize_txt'])
+        self.ui_set.slnc_tc_in.setText(self.config['Damage_test_silence']['slnc_tc_in'])
+        self.ui_set.slnc_tc_out.setText(self.config['Damage_test_silence']['slnc_tc_out'])
 
-        self.ui_set.frz_dur_txt.setText('2')
-        self.ui_set.frz_noize_txt.setText('-40')
-        self.ui_set.frz_tc_in.setText('00:00:00')
-        self.ui_set.frz_tc_out.setText('00:00:00')
+        self.ui_set.frz_dur_txt.setText(self.config['Damage_test_freeze']['frz_dur'])
+        self.ui_set.frz_noize_txt.setText(self.config['Damage_test_freeze']['frz_noize'])
+        self.ui_set.frz_tc_in.setText(self.config['Damage_test_freeze']['frz_tc_in'])
+        self.ui_set.frz_tc_out.setText(self.config['Damage_test_freeze']['frz_tc_out'])
 
     def save_settings_main(self):
         self.ui_set.codec_txt.text()
@@ -820,91 +1819,125 @@ class VideoInfo(QMainWindow):
         self.settings.close()
 
     def save_temp_settings_main(self):
-        self.temp_codec = self.ui_set.codec_txt.text()
-        self.temp_width = self.ui_set.width_txt.text()
-        self.temp_height = self.ui_set.height_txt.text()
-        self.temp_v_bit_rate = self.ui_set.v_bit_rate_txt.text()
-        self.temp_frame_rate = self.ui_set.frame_rate_comboBox.currentText()
-        self.temp_dar = self.ui_set.dar_comboBox.currentText()
-        self.temp_codec_aud = self.ui_set.codec_aud_txt.text()
-        self.temp_channels = self.ui_set.channels_txt.text()
-        self.temp_sample_rate = self.ui_set.sample_rate_comboBox.currentText()
-        self.temp_a_bit_rate = self.ui_set.a_bit_rate_txt.text()
+        self.config['Video_standard']['codec'] = self.ui_set.codec_txt.text()
+        self.config['Video_standard']['width'] = self.ui_set.width_txt.text()
+        self.config['Video_standard']['height'] = self.ui_set.height_txt.text()
+        self.config['Video_standard']['v_bit_rate'] = self.ui_set.v_bit_rate_txt.text()
+        self.config['Video_standard']['frame_rate'] = self.ui_set.frame_rate_comboBox.currentText()
+        self.config['Video_standard']['dar'] = self.ui_set.dar_comboBox.currentText()
+        self.config['Audio_standard']['codec_aud'] = self.ui_set.codec_aud_txt.text()
+        self.config['Audio_standard']['channels'] = self.ui_set.channels_txt.text()
+        self.config['Audio_standard']['sample_rate'] = self.ui_set.sample_rate_comboBox.currentText()
+        self.config['Audio_standard']['a_bit_rate'] = self.ui_set.a_bit_rate_txt.text()
 
-        self.temp_r128_i = self.ui_set.r128_i_txt.text()
-        self.temp_r128_lra = self.ui_set.r128_lra_txt.text()
-        self.temp_r128_tp = self.ui_set.r128_tp_txt.text()
-        self.temp_r128_thr = self.ui_set.r128_thr_txt.text()
+        self.config['Loudness_meter']['r128_i'] = self.ui_set.r128_i_txt.text()
+        self.config['Loudness_meter']['r128_lra'] = self.ui_set.r128_lra_txt.text()
+        self.config['Loudness_meter']['r128_tp'] = self.ui_set.r128_tp_txt.text()
+        self.config['Loudness_meter']['r128_thr'] = self.ui_set.r128_thr_txt.text()
+
+        # self.temp_codec = self.ui_set.codec_txt.text()
+        # self.temp_width = self.ui_set.width_txt.text()
+        # self.temp_height = self.ui_set.height_txt.text()
+        # self.temp_v_bit_rate = self.ui_set.v_bit_rate_txt.text()
+        # self.temp_frame_rate = self.ui_set.frame_rate_comboBox.currentText()
+        # self.temp_dar = self.ui_set.dar_comboBox.currentText()
+        # self.temp_codec_aud = self.ui_set.codec_aud_txt.text()
+        # self.temp_channels = self.ui_set.channels_txt.text()
+        # self.temp_sample_rate = self.ui_set.sample_rate_comboBox.currentText()
+        # self.temp_a_bit_rate = self.ui_set.a_bit_rate_txt.text()
+        #
+        # self.temp_r128_i = self.ui_set.r128_i_txt.text()
+        # self.temp_r128_lra = self.ui_set.r128_lra_txt.text()
+        # self.temp_r128_tp = self.ui_set.r128_tp_txt.text()
+        # self.temp_r128_thr = self.ui_set.r128_thr_txt.text()
+
+        self.write_config()
 
     def save_temp_settings_damage(self):
-        self.blck_dur_temp = self.ui_set.blck_dur_txt.text()
-        self.blck_thr_temp = self.ui_set.blck_thr_txt.text()
-        self.blck_tc_in_temp = self.ui_set.blck_tc_in.text()
-        self.blck_tc_out_temp = self.ui_set.blck_tc_out.text()
+        self.config['Damage_test_black']['blck_dur'] = self.ui_set.blck_dur_txt.text()
+        self.config['Damage_test_black']['blck_thr'] = self.ui_set.blck_thr_txt.text()
+        self.config['Damage_test_black']['blck_tc_in'] = self.ui_set.blck_tc_in.text()
+        self.config['Damage_test_black']['blck_tc_out'] = self.ui_set.blck_tc_out.text()
 
-        self.slnc_dur_temp = self.ui_set.slnc_dur_txt.text()
-        self.slnc_noize_temp = self.ui_set.slnc_noize_txt.text()
-        self.slnc_tc_in_temp = self.ui_set.slnc_tc_in.text()
-        self.slnc_tc_out_temp = self.ui_set.slnc_tc_out.text()
+        self.config['Damage_test_silence']['slnc_dur'] = self.ui_set.slnc_dur_txt.text()
+        self.config['Damage_test_silence']['slnc_noize_txt'] = self.ui_set.slnc_noize_txt.text()
+        self.config['Damage_test_silence']['slnc_tc_in'] = self.ui_set.slnc_tc_in.text()
+        self.config['Damage_test_silence']['slnc_tc_out'] = self.ui_set.slnc_tc_out.text()
 
-        self.frz_dur_temp = self.ui_set.frz_dur_txt.text()
-        self.frz_noize_temp = self.ui_set.frz_noize_txt.text()
-        self.frz_tc_in_temp = self.ui_set.frz_tc_in.text()
-        self.frz_tc_out_temp = self.ui_set.frz_tc_out.text()
+        self.config['Damage_test_freeze']['frz_dur'] = self.ui_set.frz_dur_txt.text()
+        self.config['Damage_test_freeze']['frz_noize'] = self.ui_set.frz_noize_txt.text()
+        self.config['Damage_test_freeze']['frz_tc_in'] = self.ui_set.frz_tc_in.text()
+        self.config['Damage_test_freeze']['frz_tc_out'] = self.ui_set.frz_tc_out.text()
 
-    def call_temp_settings_main(self):
-        self.ui_set.codec_txt.setText(self.temp_codec)
-        self.ui_set.width_txt.setText(self.temp_width)
-        self.ui_set.height_txt.setText(self.temp_height)
-        self.ui_set.v_bit_rate_txt.setText(str(self.temp_v_bit_rate))
-        # self.ui_set.frame_rate_comboBox.addItems(list(str(self.temp_frame_rate)))
-        self.ui_set.frame_rate_comboBox.setCurrentText(str(self.temp_frame_rate))
-        # self.ui_set.dar_comboBox.addItems(list(str(self.temp_dar)))
-        self.ui_set.dar_comboBox.setCurrentText(str(self.temp_dar))
-        self.ui_set.codec_aud_txt.setText(self.temp_codec_aud)
-        self.ui_set.channels_txt.setText(self.temp_channels)
-        # self.ui_set.sample_rate_comboBox.addItems(list(str(self.temp_sample_rate)))
-        # print(self.temp_sample_rate)
-        self.ui_set.sample_rate_comboBox.setCurrentText(str(self.temp_sample_rate))
-        self.ui_set.a_bit_rate_txt.setText(str(self.temp_a_bit_rate))
+        self.write_config()
+        # self.blck_dur_temp = self.ui_set.blck_dur_txt.text()
+        # self.blck_thr_temp = self.ui_set.blck_thr_txt.text()
+        # self.blck_tc_in_temp = self.ui_set.blck_tc_in.text()
+        # self.blck_tc_out_temp = self.ui_set.blck_tc_out.text()
+        #
+        # self.slnc_dur_temp = self.ui_set.slnc_dur_txt.text()
+        # self.slnc_noize_temp = self.ui_set.slnc_noize_txt.text()
+        # self.slnc_tc_in_temp = self.ui_set.slnc_tc_in.text()
+        # self.slnc_tc_out_temp = self.ui_set.slnc_tc_out.text()
+        #
+        # self.frz_dur_temp = self.ui_set.frz_dur_txt.text()
+        # self.frz_noize_temp = self.ui_set.frz_noize_txt.text()
+        # self.frz_tc_in_temp = self.ui_set.frz_tc_in.text()
+        # self.frz_tc_out_temp = self.ui_set.frz_tc_out.text()
 
-        self.ui_set.r128_i_txt.setText(str(self.temp_r128_i))
-        self.ui_set.r128_lra_txt.setText(str(self.temp_r128_lra))
-        self.ui_set.r128_tp_txt.setText(str(self.temp_r128_tp))
-        self.ui_set.r128_thr_txt.setText(str(self.temp_r128_thr))
-
-    def call_temp_settings_damage(self):
-        self.ui_set.blck_dur_txt.setText(self.blck_dur_temp)
-        self.ui_set.blck_thr_txt.setText(self.blck_thr_temp)
-        self.ui_set.blck_tc_in.setText(self.blck_tc_in_temp)
-        self.ui_set.blck_tc_out.setText(self.blck_tc_out_temp)
-
-        self.ui_set.slnc_dur_txt.setText(self.slnc_dur_temp)
-        self.ui_set.slnc_noize_txt.setText(self.slnc_noize_temp)
-        self.ui_set.slnc_tc_in.setText(self.slnc_tc_in_temp)
-        self.ui_set.slnc_tc_out.setText(self.slnc_tc_out_temp)
-
-        self.ui_set.frz_dur_txt.setText(self.frz_dur_temp)
-        self.ui_set.frz_noize_txt.setText(self.frz_noize_temp)
-        self.ui_set.frz_tc_in.setText(self.frz_tc_in_temp)
-        self.ui_set.frz_tc_out.setText(self.frz_tc_out_temp)
+    # def call_temp_settings_main(self):
+    #     self.ui_set.codec_txt.setText(self.temp_codec)
+    #     self.ui_set.width_txt.setText(self.temp_width)
+    #     self.ui_set.height_txt.setText(self.temp_height)
+    #     self.ui_set.v_bit_rate_txt.setText(str(self.temp_v_bit_rate))
+    #     # self.ui_set.frame_rate_comboBox.addItems(list(str(self.temp_frame_rate)))
+    #     self.ui_set.frame_rate_comboBox.setCurrentText(str(self.temp_frame_rate))
+    #     # self.ui_set.dar_comboBox.addItems(list(str(self.temp_dar)))
+    #     self.ui_set.dar_comboBox.setCurrentText(str(self.temp_dar))
+    #     self.ui_set.codec_aud_txt.setText(self.temp_codec_aud)
+    #     self.ui_set.channels_txt.setText(self.temp_channels)
+    #     # self.ui_set.sample_rate_comboBox.addItems(list(str(self.temp_sample_rate)))
+    #     # print(self.temp_sample_rate)
+    #     self.ui_set.sample_rate_comboBox.setCurrentText(str(self.temp_sample_rate))
+    #     self.ui_set.a_bit_rate_txt.setText(str(self.temp_a_bit_rate))
+    #
+    #     self.ui_set.r128_i_txt.setText(str(self.temp_r128_i))
+    #     self.ui_set.r128_lra_txt.setText(str(self.temp_r128_lra))
+    #     self.ui_set.r128_tp_txt.setText(str(self.temp_r128_tp))
+    #     self.ui_set.r128_thr_txt.setText(str(self.temp_r128_thr))
+    #
+    # def call_temp_settings_damage(self):
+    #     self.ui_set.blck_dur_txt.setText(self.blck_dur_temp)
+    #     self.ui_set.blck_thr_txt.setText(self.blck_thr_temp)
+    #     self.ui_set.blck_tc_in.setText(self.blck_tc_in_temp)
+    #     self.ui_set.blck_tc_out.setText(self.blck_tc_out_temp)
+    #
+    #     self.ui_set.slnc_dur_txt.setText(self.slnc_dur_temp)
+    #     self.ui_set.slnc_noize_txt.setText(self.slnc_noize_temp)
+    #     self.ui_set.slnc_tc_in.setText(self.slnc_tc_in_temp)
+    #     self.ui_set.slnc_tc_out.setText(self.slnc_tc_out_temp)
+    #
+    #     self.ui_set.frz_dur_txt.setText(self.frz_dur_temp)
+    #     self.ui_set.frz_noize_txt.setText(self.frz_noize_temp)
+    #     self.ui_set.frz_tc_in.setText(self.frz_tc_in_temp)
+    #     self.ui_set.frz_tc_out.setText(self.frz_tc_out_temp)
 
     def header_rename(self, header):
         header = header.replace('file_name', 'Name')
-        header = header.replace('F_bit_rate', 'Bit rate')
-        header = header.replace('V01_codec_name', 'Codec')
-        header = header.replace('V01_width', 'Width')
-        header = header.replace('V01_height', 'Height')
-        header = header.replace('V01_sample_aspect_ratio', 'SAR')
-        header = header.replace('V01_display_aspect_ratio', 'DAR')
-        header = header.replace('V01_r_frame_rate', 'Frame rate')
-        header = header.replace('F_duration', 'Duration')
+        header = header.replace('f_bit_rate', 'Bit rate')
+        header = header.replace('v01_codec_name', 'Codec')
+        header = header.replace('v01_width', 'Width')
+        header = header.replace('v01_height', 'Height')
+        header = header.replace('v01_sample_aspect_ratio', 'SAR')
+        header = header.replace('v01_display_aspect_ratio', 'DAR')
+        header = header.replace('v01_r_frame_rate', 'Frame rate')
+        header = header.replace('f_duration', 'Duration')
 
         header = header.replace('audio_streams', 'Audio map')
-        header = header.replace('A01_codec_name', 'Audio codec')
-        header = header.replace('A01_sample_rate', 'Sample rate')
-        header = header.replace('A01_channels', 'Channels')
-        header = header.replace('A01_bit_rate', 'Audio bit rate')
+        header = header.replace('a01_codec_name', 'Audio codec')
+        header = header.replace('a01_sample_rate', 'Sample rate')
+        header = header.replace('a01_channels', 'Channels')
+        header = header.replace('a01_bit_rate', 'Audio bit rate')
         header = header.replace('input_i', 'Integrated')
         header = header.replace('input_tp', 'True Peak')
         header = header.replace('input_lra', 'LRA')
@@ -917,30 +1950,33 @@ class VideoInfo(QMainWindow):
         return header
 
     def tbl2_header_rename(self, header):
-        header = header.replace('V01_codec_name', 'Codec')
-        header = header.replace('V01_profile', 'Profile')
-        header = header.replace('V01_codec_type', 'Codec type')
-        header = header.replace('V01_width', 'Width')
-        header = header.replace('V01_height', 'Height')
-        header = header.replace('V01_sample_aspect_ratio', 'SAR')
-        header = header.replace('V01_display_aspect_ratio', 'DAR')
-        header = header.replace('V01_pix_fmt', 'Pixel format')
-        header = header.replace('V01_level', 'Level')
-        header = header.replace('V01_color_range', 'Color range')
-        header = header.replace('V01_color_space', 'Color space')
-        header = header.replace('V01_field_order', 'Field order')
-        header = header.replace('V01_r_frame_rate', 'Frame rate')
-        header = header.replace('V01_language', 'Language')
-        header = header.replace('V01_title', 'Handler name')
-        header = header.replace('V01_handler_name', 'Handler name')
-        header = header.replace('V01_encoder', 'Encoder')
-        header = header.replace('F_filename', 'File name')
-        header = header.replace('F_format_name', 'Format name')
-        header = header.replace('F_duration', 'Duration')
-        header = header.replace('F_size', 'Size')
-        header = header.replace('F_bit_rate', 'Bit rate')
-        header = header.replace('F_title', 'Title')
-        header = header.replace('F_encoder', 'Encoder')
+        header = header.replace('v01_codec_name', 'Codec')
+        header = header.replace('v01_profile', 'Profile')
+        header = header.replace('v01_codec_type', 'Codec type')
+        header = header.replace('v01_width', 'Width')
+        header = header.replace('v01_height', 'Height')
+        header = header.replace('v01_sample_aspect_ratio', 'SAR')
+        header = header.replace('v01_display_aspect_ratio', 'DAR')
+        header = header.replace('v01_pix_fmt', 'Pixel format')
+        header = header.replace('v01_level', 'Level')
+        header = header.replace('v01_color_range', 'Color range')
+        header = header.replace('v01_color_space', 'Color space')
+        header = header.replace('v01_field_order', 'Field order')
+        header = header.replace('v01_r_frame_rate', 'Frame rate')
+        header = header.replace('v01_language', 'Language')
+        header = header.replace('v01_title', 'Handler name')
+        header = header.replace('v01_handler_name', 'Handler name')
+        header = header.replace('v01_encoder', 'Encoder')
+        header = header.replace('f_file_path', 'File path')
+        header = header.replace('f_filename', 'File path')
+        header = header.replace('file_path', 'File path')
+        header = header.replace('file_name', 'File name')
+        header = header.replace('f_format_name', 'Format name')
+        header = header.replace('f_duration', 'Duration')
+        header = header.replace('f_size', 'Size')
+        header = header.replace('f_bit_rate', 'Bit rate')
+        header = header.replace('f_title', 'Title')
+        header = header.replace('f_encoder', 'Encoder')
 
         # header = header.replace('codec_name', 'Audio codec')
         # header = header.replace('sample_rate', 'Sample rate')
@@ -953,9 +1989,62 @@ class VideoInfo(QMainWindow):
         header = header.replace('_', ' ')
         return header
 
+    def selected_db_file_list(self):
+        items = self.ui.tableView_db.selectionModel().selectedRows()
+        file_list = [item.data() for item in items]
+        return tuple(file_list)
+
+    def selected_db_file_path(self):
+        index = self.ui.tableView_db.selectionModel().currentIndex()
+        index_item = index.sibling(index.row(), index.column()).data()
+        file_path = index.sibling(index.row(), 0).data()
+        return file_path
+
+    def click_table_db(self):
+        file_path = self.selected_db_file_path()
+        self.create_table_02(file_path)
+        self.create_tags(file_path)
+        self.show_waves(file_path)
+
+    def move_to_table_01(self):
+        file_list = self.selected_db_file_list()
+        if len(file_list) != 0:
+            self.ui.tableWidget_01.setRowCount(0)
+            self.switch_db_editor()
+            self.progress_dialog_tbl_start(file_list)
+
+
+    def move_to_db(self):
+        tbl_name = self.read_tbl_name()
+        DataPos().create_table(tbl_name)
+        file_list = self.selected_db_file_list()
+        for file_path in file_list:
+            headers = DataLite().read_all_headers(tbl_name)
+            DataPos().add_columns(tbl_name, headers)
+            data = DataLite().read_all_data_for_file(tbl_name, file_path)
+            DataPos().move_video(tbl_name, file_path, headers, tuple(data))
+
+
+    def selected_rows(self):
+        items = self.ui.tableWidget_01.selectionModel().selectedRows()
+        selected_rows = [item.row() for item in items]
+        return selected_rows
+
+    def selected_file_list(self):
+        items = self.ui.tableWidget_01.selectionModel().selectedRows()
+        file_list = [item.data() for item in items]
+        return tuple(file_list)
+
+    def choose_default_dir(self):
+        directory = r'\\slave\storage\ContentX'
+        file_path = QFileDialog.getExistingDirectory(self, caption="Choose directory", dir=directory)
+        if file_path != '':
+            self.config['path']['default_path'] = file_path
+            self.write_config()
+        return file_path
+
     def get_file_list(self):
-        directory = r'\\slave\storage\ContentX\FILMS'
-        # print(self.ui.tableView_db.selectedIndexes())
+        directory = self.config['path']['default_path']
         file_list = QFileDialog.getOpenFileNames(
             parent=self,
             caption='Select files',
@@ -969,237 +2058,102 @@ class VideoInfo(QMainWindow):
     def prepare_background_loudnorm_scan(self):
         file_list = self.get_file_list()
         if file_list != ():
-            progress_dialog_ffpr = QProgressDialog("FFprobe Scan", "Cancel", 0, 100, self)
-            progress_dialog_ffpr.setWindowTitle("Processing...")
-            progress_dialog_ffpr.setWindowModality(Qt.WindowModal)
-            progress_dialog_ffpr.setMinimumDuration(0)
-            progress_dialog_ffpr.setMinimumSize(400, 150)
-            progress_dialog_ffpr.setStyleSheet("QPushButton {color: white; background-color:rgba(255,255,255,30);"
-                                               "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
-                                               "QPushButton:hover {background-color:rgba(255,255,255,50);}"
-                                               "QPushButton:pressed{background-color:rgba(255,255,255,70);}")
-
-            start_scan = self.start_ffprobe(file_list, progress_dialog_ffpr)
+            progress_dialog = self.progress_bar()
+            start_scan = self.start_ffprobe(file_list, progress_dialog)
             if start_scan:
-                progress_dialog_r128 = QProgressDialog("Loudness scan", "Cancel", 0, 100, self)
-                progress_dialog_r128.setWindowTitle("Processing...")
-                progress_dialog_r128.setWindowModality(Qt.WindowModal)
-                progress_dialog_r128.setMinimumDuration(0)
-                progress_dialog_r128.setMinimumSize(400, 150)
-                progress_dialog_r128.setStyleSheet("QPushButton {color: white; background-color:rgba(255,255,255,30);"
-                                                   "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
-                                                   "QPushButton:hover {background-color:rgba(255,255,255,50);}"
-                                                   "QPushButton:pressed{background-color:rgba(255,255,255,70);}")
-
-                self.backgound_scan_loudnorm(file_list, progress_dialog_r128)
-                # process = multiprocessing.Process(target=self.scan_loudnorm(tuple(tbl_file_list), progress_dialog_r128))
-                # process.start()
-                progress_dialog_r128.setValue(100)
-            # progress_dialog_r128.repaint()
+                progress_dialog = self.progress_bar()
+                self.backgound_scan_loudnorm(file_list, progress_dialog)
+                QApplication.processEvents()
 
     def prepare_background_blackdetect_scan(self):
         file_list = self.get_file_list()
         if file_list != ():
-            progress_dialog_blck = QProgressDialog("BlackDetect scan", "Cancel", 0, 100, self)
-            progress_dialog_blck.setWindowTitle("Processing...")
-            progress_dialog_blck.setWindowModality(Qt.WindowModal)
-            progress_dialog_blck.setMinimumDuration(0)
-            progress_dialog_blck.setMinimumSize(400, 150)
-            progress_dialog_blck.setStyleSheet("QPushButton {color: white; background-color:rgba(255,255,255,30);"
-                                               "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
-                                               "QPushButton:hover {background-color:rgba(255,255,255,50);}"
-                                               "QPushButton:pressed{background-color:rgba(255,255,255,70);}")
-
-            self.backgound_scan_blackdetect(file_list, progress_dialog_blck)
-            progress_dialog_blck.setValue(100)
-            progress_dialog_blck.repaint()
+            progress_dialog = self.progress_bar()
+            self.backgound_scan_blackdetect(file_list, progress_dialog)
+            QApplication.processEvents()
 
     def prepare_background_silencedetect_scan(self):
         file_list = self.get_file_list()
         if file_list != ():
-            progress_dialog_slnc = QProgressDialog("SilenceDetect scan", "Cancel", 0, 100, self)
-            progress_dialog_slnc.setWindowTitle("Processing...")
-            progress_dialog_slnc.setWindowModality(Qt.WindowModal)
-            progress_dialog_slnc.setMinimumDuration(0)
-            progress_dialog_slnc.setMinimumSize(400, 150)
-            progress_dialog_slnc.setStyleSheet("QPushButton {color: white; background-color:rgba(255,255,255,30);"
-                                               "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
-                                               "QPushButton:hover {background-color:rgba(255,255,255,50);}"
-                                               "QPushButton:pressed{background-color:rgba(255,255,255,70);}")
-
-            self.backgound_scan_silencedetect(file_list, progress_dialog_slnc)
-            progress_dialog_slnc.setValue(100)
-            progress_dialog_slnc.repaint()
+            progress_dialog = self.progress_bar()
+            self.backgound_scan_silencedetect(file_list, progress_dialog)
+            QApplication.processEvents()
 
     def prepare_background_freezedetect_scan(self):
         file_list = self.get_file_list()
         if file_list != ():
-            progress_dialog_frz = QProgressDialog("FreezeDetect scan", "Cancel", 0, 100, self)
-            progress_dialog_frz.setWindowTitle("Processing...")
-            progress_dialog_frz.setWindowModality(Qt.WindowModal)
-            progress_dialog_frz.setMinimumDuration(0)
-            progress_dialog_frz.setMinimumSize(400, 150)
-            progress_dialog_frz.setStyleSheet("QPushButton {color: white; background-color:rgba(255,255,255,30);"
-                                              "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
-                                              "QPushButton:hover {background-color:rgba(255,255,255,50);}"
-                                              "QPushButton:pressed{background-color:rgba(255,255,255,70);}")
-
-            self.backgound_scan_freezedetect(file_list, progress_dialog_frz)
-            progress_dialog_frz.setValue(100)
-            progress_dialog_frz.repaint()
-            # print(tuple(file_list[0]))
+            progress_dialog = self.progress_bar()
+            self.backgound_scan_freezedetect(file_list, progress_dialog)
+            QApplication.processEvents()
 
     def prepare_background_fulldetect_scan(self):
         file_list = self.get_file_list()
         if file_list != ():
-            progress_dialog_ffpr = QProgressDialog("FFprobe Scan", "Cancel", 0, 100, self)
-            progress_dialog_ffpr.setWindowTitle("Processing...")
-            progress_dialog_ffpr.setWindowModality(Qt.WindowModal)
-            progress_dialog_ffpr.setMinimumDuration(0)
-            progress_dialog_ffpr.setMinimumSize(400, 150)
-            progress_dialog_ffpr.setStyleSheet("QPushButton {color: white; background-color:rgba(255,255,255,30);"
-                                               "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
-                                               "QPushButton:hover {background-color:rgba(255,255,255,50);}"
-                                               "QPushButton:pressed{background-color:rgba(255,255,255,70);}")
-
+            progress_dialog = self.progress_bar()
             self.ui.tableWidget_01.setRowCount(0)
-            if self.start_ffprobe_bg(file_list, progress_dialog_ffpr):
-                progress_dialog_r128 = QProgressDialog("Loudness scan", "Cancel", 0, 100, self)
-                progress_dialog_r128.setWindowTitle("Processing...")
-                progress_dialog_r128.setWindowModality(Qt.WindowModal)
-                progress_dialog_r128.setMinimumDuration(0)
-                progress_dialog_r128.setMinimumSize(400, 150)
-                progress_dialog_r128.setStyleSheet("QPushButton {color: white; background-color:rgba(255,255,255,30);"
-                                                   "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
-                                                   "QPushButton:hover {background-color:rgba(255,255,255,50);}"
-                                                   "QPushButton:pressed{background-color:rgba(255,255,255,70);}")
-
-                if self.backgound_scan_loudnorm(file_list, progress_dialog_r128):
-                    # process = multiprocessing.Process(target=self.scan_loudnorm(tuple(tbl_file_list), progress_dialog_r128))
-                    # process.start()
-                    progress_dialog_r128.setValue(100)
-
+            if self.start_ffprobe_bg(file_list, progress_dialog):
+                progress_dialog = self.progress_bar()
+                if self.backgound_scan_loudnorm(file_list, progress_dialog):
                     self.ui.tableWidget_01.setColumnCount(4)
                     headers = ['File path', 'Name', 'Loudnorm', 'BlackDetect', 'SilenceDetect', 'FreezeDetect']
                     self.ui.tableWidget_01.setHorizontalHeaderLabels(headers)
-                    progress_dialog_blck = QProgressDialog("BlackDetect scan", "Cancel", 0, 100, self)
-                    progress_dialog_blck.setWindowTitle("Processing...")
-                    progress_dialog_blck.setWindowModality(Qt.WindowModal)
-                    progress_dialog_blck.setMinimumDuration(0)
-                    progress_dialog_blck.setMinimumSize(400, 150)
-                    progress_dialog_blck.setStyleSheet(
-                        "QPushButton {color: white; background-color:rgba(255,255,255,30);"
-                        "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
-                        "QPushButton:hover {background-color:rgba(255,255,255,50);}"
-                        "QPushButton:pressed{background-color:rgba(255,255,255,70);}")
+                    progress_dialog = self.progress_bar()
+                    if self.backgound_fullscan_blackdetect(file_list, progress_dialog):
+                        progress_dialog.setValue(100)
+                        QApplication.processEvents()
 
-                    if self.backgound_fullscan_blackdetect(file_list, progress_dialog_blck):
-                        progress_dialog_blck.setValue(100)
-                        progress_dialog_blck.repaint()
-
-                        progress_dialog_slnc = QProgressDialog("SilenceDetect scan", "Cancel", 0, 100, self)
-                        progress_dialog_slnc.setWindowTitle("Processing...")
-                        progress_dialog_slnc.setWindowModality(Qt.WindowModal)
-                        progress_dialog_slnc.setMinimumDuration(0)
-                        progress_dialog_slnc.setMinimumSize(400, 150)
-                        progress_dialog_slnc.setStyleSheet(
-                            "QPushButton {color: white; background-color:rgba(255,255,255,30);"
-                            "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
-                            "QPushButton:hover {background-color:rgba(255,255,255,50);}"
-                            "QPushButton:pressed{background-color:rgba(255,255,255,70);}")
+                        progress_dialog = self.progress_bar()
 
                         self.ui.tableWidget_01.setColumnCount(5)
                         headers = ['File path', 'Name', 'Loudnorm', 'BlackDetect', 'SilenceDetect', 'FreezeDetect']
                         self.ui.tableWidget_01.setHorizontalHeaderLabels(headers)
-                        if self.backgound_fullscan_silencedetect(file_list, progress_dialog_slnc):
-                            progress_dialog_slnc.setValue(100)
-                            progress_dialog_slnc.repaint()
-
-                            progress_dialog_frz = QProgressDialog("FreezeDetect scan", "Cancel", 0, 100, self)
-                            progress_dialog_frz.setWindowTitle("Processing...")
-                            progress_dialog_frz.setWindowModality(Qt.WindowModal)
-                            progress_dialog_frz.setMinimumDuration(0)
-                            progress_dialog_frz.setMinimumSize(400, 150)
-                            progress_dialog_frz.setStyleSheet(
-                                "QPushButton {color: white; background-color:rgba(255,255,255,30);"
-                                "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
-                                "QPushButton:hover {background-color:rgba(255,255,255,50);}"
-                                "QPushButton:pressed{background-color:rgba(255,255,255,70);}")
-
+                        if self.backgound_fullscan_silencedetect(file_list, progress_dialog):
+                            QApplication.processEvents()
+                            progress_dialog = self.progress_bar()
                             self.ui.tableWidget_01.setColumnCount(6)
                             headers = ['File path', 'Name', 'Loudnorm', 'BlackDetect', 'SilenceDetect', 'FreezeDetect']
                             self.ui.tableWidget_01.setHorizontalHeaderLabels(headers)
-                            if self.backgound_fullscan_freezedetect(file_list, progress_dialog_frz):
-                                progress_dialog_frz.setValue(100)
-                                progress_dialog_frz.repaint()
+                            if self.backgound_fullscan_freezedetect(file_list, progress_dialog):
+                                QApplication.processEvents()
 
-        # process = multiprocessing.Process(target=self.start_ffprobe(tuple(file_list[0])))
-        # process.start()
-        # task_thread = threading.Thread(target=self.start_ffprobe(tuple(file_list[0])))
-        # task_thread.start()
-        # lock = threading.Lock()
-
-    # def add_file_list(self):
-    #     add_file = QFileDialog.getOpenFileNames(
-    #         parent=self,
-    #         caption='Select files',
-    #         dir=r'C:/Users/Алексей/Videos',
-    #         filter='Video files (*.mp4 *.mkv);; All files (*.*)'
-    #     )
-    # print(file_list[0])
-    # new_file_list = self.get_file_list() + add_file
-    # print(self.file_list)
-    # print(self.add_file[0])
-    # self.start_ffprobe(new_file_list)
     def prepare_ffprobe(self):
         file_list = self.get_file_list()
         if file_list != ():
             self.progress_dialog_ffpr_start(file_list)
 
     def progress_dialog_ffpr_start(self, file_list):
-        progress_dialog_ffpr = QProgressDialog("FFprobe Scan", "Cancel", 0, 100, self)
-        progress_dialog_ffpr.setWindowTitle("Processing...")
-        progress_dialog_ffpr.setWindowModality(Qt.WindowModal)
-        progress_dialog_ffpr.setMinimumDuration(0)
-        progress_dialog_ffpr.setMinimumSize(400, 150)
-        progress_dialog_ffpr.setStyleSheet("QPushButton {color: white; background-color:rgba(255,255,255,30);"
-                                           "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
-                                           "QPushButton:hover {background-color:rgba(255,255,255,50);}"
-                                           "QPushButton:pressed{background-color:rgba(255,255,255,70);}")
-
-        if self.start_ffprobe(file_list, progress_dialog_ffpr):
+        progress_dialog = self.progress_bar()
+        if self.start_ffprobe(file_list, progress_dialog):
             self.progress_dialog_tbl_start(file_list)
 
     def progress_dialog_tbl_start(self, file_list):
-        progress_dialog_tbl = QProgressDialog("Creating Table", "Cancel", 0, 100, self)
-        progress_dialog_tbl.setWindowTitle("Processing...")
-        progress_dialog_tbl.setWindowModality(Qt.WindowModal)
-        progress_dialog_tbl.setMinimumDuration(0)
-        progress_dialog_tbl.setMinimumSize(400, 150)
-        progress_dialog_tbl.setStyleSheet("QPushButton {color: white; background-color:rgba(255,255,255,30);"
-                                          "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
-                                          "QPushButton:hover {background-color:rgba(255,255,255,50);}"
-                                          "QPushButton:pressed{background-color:rgba(255,255,255,70);}")
-        self.prepare_table_01(file_list, progress_dialog_tbl)
-        progress_dialog_tbl.setValue(100)
+        progress_dialog = self.progress_bar()
+        self.prepare_table_01(file_list, progress_dialog)
 
-    def start_ffprobe(self, file_list, progress_dialog_ffpr):
+    def start_ffprobe(self, file_list, progress_dialog):
+        tbl_name = self.read_tbl_name()
         complited = False
         # db_file_list = Data().read_bd_multi('file_path')
         total_files = len(file_list)
         for i, file_path in enumerate(file_list):
             # self.prepare_table_bg(file_path)
-            progress_dialog_ffpr.setLabelText(f'{i + 1}/{total_files}  FFprobe Scan\n{file_path}')
-            if progress_dialog_ffpr.wasCanceled():
+            self.progress_dialog_label.setText(f'{i + 1}/{total_files}  FFprobe Scan\n{file_path}')
+            progress_dialog.setLabel(self.progress_dialog_label)
+            # progress_dialog_ffpr.setLabelText(f'{i + 1}/{total_files}  FFprobe Scan\n{file_path}')
+            QApplication.processEvents()
+            if progress_dialog.wasCanceled():
                 complited = False
                 self.progress_dialog_tbl_start(file_list[:i])
                 break
-            db_file_path = Data().read_bd('file_path', file_path)
+            if self.selected_db == 'SQLITE':
+                db_file_path = DataLite().read_bd(tbl_name, 'file_path', file_path)
+            else:
+                db_file_path = DataPos().read_bd(tbl_name, 'file_path', file_path)
             if file_path != db_file_path:
                 print(now())
                 print('Сбор данных для файла', file_path)
                 try:
-                    Info(file_path)
+                    Info(self.selected_db, tbl_name, file_path)
                     print(now())
                     print('Сбор данных завершён')
                 except Exception:
@@ -1207,28 +2161,34 @@ class VideoInfo(QMainWindow):
                     print('Ошибка сбора данных')
                     pass
             progress = int((i + 1) / total_files * 100)
-            progress_dialog_ffpr.setValue(progress)
+            progress_dialog.setValue(progress)
             QApplication.processEvents()
             complited = True
         return complited
 
-    def start_ffprobe_bg(self, file_list, progress_dialog_ffpr):
+    def start_ffprobe_bg(self, file_list, progress_dialog):
+        tbl_name = self.read_tbl_name()
         complited = False
         # db_file_list = Data().read_bd_multi('file_path')
         total_files = len(file_list)
         for i, file_path in enumerate(file_list):
             self.prepare_table_bg(file_path)
-            progress_dialog_ffpr.setLabelText(f'{i + 1}/{total_files}  FFprobe Scan\n{file_path}')
-            if progress_dialog_ffpr.wasCanceled():
+            self.progress_dialog_label.setText(f'{i + 1}/{total_files}  FFprobe Scan\n{file_path}')
+            progress_dialog.setLabel(self.progress_dialog_label)
+            QApplication.processEvents()
+            if progress_dialog.wasCanceled():
                 complited = False
                 # self.progress_dialog_tbl_start(file_list[:i])
                 break
-            db_file_path = Data().read_bd('file_path', file_path)
+            if self.selected_db == 'SQLITE':
+                db_file_path = DataLite().read_bd(self.read_tbl_name(), 'file_path', file_path)
+            else:
+                db_file_path = DataPos().read_bd(self.read_tbl_name(), 'file_path', file_path)
             if file_path != db_file_path:
                 print(now())
                 print('Сбор данных для файла', file_path)
                 try:
-                    Info(file_path)
+                    Info(self.selected_db, tbl_name, file_path)
                     print(now())
                     print('Сбор данных завершён')
                 except Exception:
@@ -1236,7 +2196,7 @@ class VideoInfo(QMainWindow):
                     print('Ошибка сбора данных')
                     pass
             progress = int((i + 1) / total_files * 100)
-            progress_dialog_ffpr.setValue(progress)
+            progress_dialog.setValue(progress)
             QApplication.processEvents()
             complited = True
         return complited
@@ -1272,6 +2232,7 @@ class VideoInfo(QMainWindow):
             self.ui.tableWidget_01.item(row_position, 2).setBackground(self.red_dark)
         if status == 'Сканирование проводилось':
             self.ui.tableWidget_01.item(row_position, 2).setBackground(self.yell_dark)
+        self.ui.tableWidget_01.selectRow(row_position)
         self.ui.tableWidget_01.repaint()
         self.table_mode = False
 
@@ -1300,18 +2261,22 @@ class VideoInfo(QMainWindow):
             self.ui.tableWidget_01.item(row, col).setBackground(self.red_dark)
         if status == 'Сканирование проводилось':
             self.ui.tableWidget_01.item(row, col).setBackground(self.yell_dark)
+        self.ui.tableWidget_01.selectRow(row)
         self.ui.tableWidget_01.repaint()
         self.table_mode = False
 
     def prepare_table_01(self, file_list, progress_dialog_tbl):
         total_files = len(file_list)
         for i, file_path in enumerate(file_list):
-            print(i, file_path)
-            progress_dialog_tbl.setLabelText(f'{i + 1}/{total_files}  Creating Table\n{file_path}')
+            self.progress_dialog_label.setText(f'{i + 1}/{total_files}  Creating Table\n{file_path}')
+            progress_dialog_tbl.setLabel(self.progress_dialog_label)
+            QApplication.processEvents()
             if progress_dialog_tbl.wasCanceled():
                 break
+            if not os.path.exists(file_path):
+                print('files offline')
+                continue
             row_count = self.ui.tableWidget_01.rowCount()
-            print(row_count)
             if row_count == 0:
                 print(now())
                 print('Построение:', file_path)
@@ -1322,7 +2287,6 @@ class VideoInfo(QMainWindow):
                     tbl_file_path = self.ui.tableWidget_01.item(row, 0).text()
                     tbl_file_list.append(tbl_file_path)
                 tbl_file_list = tuple(tbl_file_list)
-                print(tbl_file_list)
                 if file_path not in tbl_file_list:
                     print(now())
                     print('Построение:', file_path)
@@ -1334,41 +2298,23 @@ class VideoInfo(QMainWindow):
             progress_dialog_tbl.setValue(progress)
             QApplication.processEvents()
 
-    # Info(file_path)
-    # print(now())
-    # print('Сбор данных для файла', file_path, 'завершён')
-
-    # def write_base(self, file_path):
-    #     data = Info(file_path).res_ffprobe(file_path)
-    #     all_headers = list(map(lambda key: key, data))
-    #     Data().add_columns(all_headers)
-    #     Data().add_headers(all_headers)
-    #     Data().add_video(file_path)
-    #     Data().add_param(file_path, all_headers, data)
-    #     # self.ui.statusBar.setText('Построение таблицы')
-    #     self.create_table_01(file_path)
-
-    # def open_
     def create_table_01(self, file_path):
+        tbl_name = self.read_tbl_name()
         self.ui.tableWidget_01.setColumnCount(22)
         if not self.table_mode:
             self.ui.tableWidget_01.setRowCount(0)
         self.ui.tableWidget_01.setSortingEnabled(False)
         print(now())
         print('Построение таблицы')
-        # self.ui.tableWidget_01.setStyleSheet(
-        #     "QTableWidget::section {background-color: rgb(100, 100, 100); color: rgb(200, 200, 200);}")
-        # file_name = os.path.basename(file_path)
-
-        # self.ui.tableWidget_01.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.ui.tableWidget_01.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        # self.ui.tableWidget_01.setColumnWidth(1, 400)
 
-        headers = ('file_path', 'file_name', 'F_bit_rate', 'V01_codec_name', 'V01_width', 'V01_height',
-                   'V01_sample_aspect_ratio', 'V01_display_aspect_ratio', 'V01_r_frame_rate', 'F_duration',
-                   'audio_streams', 'A01_codec_name', 'A01_sample_rate', 'A01_channels', 'A01_bit_rate',
+        headers = ('file_path', 'file_name', 'f_bit_rate', 'v01_codec_name', 'v01_width', 'v01_height',
+                   'v01_sample_aspect_ratio', 'v01_display_aspect_ratio', 'v01_r_frame_rate', 'f_duration',
+                   'audio_streams', 'a01_codec_name', 'a01_sample_rate', 'a01_channels', 'a01_bit_rate',
                    'input_i', 'input_tp', 'input_lra', 'input_thresh', 'black_start', 'silence_start', 'freeze_start')
         row_position = self.ui.tableWidget_01.rowCount()
-        print('row_position', row_position)
+        # print('row_position', row_position)
         self.ui.tableWidget_01.setRowCount(row_position)
         self.ui.tableWidget_01.insertRow(row_position)
 
@@ -1376,13 +2322,19 @@ class VideoInfo(QMainWindow):
         # self.ui.tableWidget_01.verticalHeader().frameGeometry()
 
         col = 0
-        # all_headers = Data().read_all_data('file_path')
-        # all_data = Data().read_all_data(file_path)
-        # all_dict = dict(zip(all_headers, all_data))
-        # print('all_dict', all_dict)
+        if self.selected_db == 'SQLITE':
+            all_headers = DataLite().read_all_headers(tbl_name)
+            all_data = DataLite().read_all_data_for_file(tbl_name, file_path)
+        else:
+            all_headers = DataPos().read_all_headers(tbl_name)
+            all_data = DataPos().read_all_data_for_file(tbl_name, file_path)
+        all_dict = dict(zip(all_headers, all_data))
         for header in headers:
-            db_data = Data().read_bd(header, file_path)
-            # db_data = all_dict[header]
+            # if self.selected_db == 'SQLITE':
+            #     db_data = DataLite().read_bd(tbl_name, header, file_path)
+            # else:
+            #     db_data = DataPos().read_bd(tbl_name, header, file_path)
+            db_data = all_dict[header]
             # print('header', header)
             # print('db_data', db_data)
             if 'frame_rate' in header and db_data != 'нет данных':
@@ -1392,7 +2344,7 @@ class VideoInfo(QMainWindow):
             if 'bit_rate' in header and db_data != 'нет данных':
                 db_data = convert_bytes(int(db_data), "bit/s")
             if 'duration' in header and db_data != 'нет данных':
-                fps = Data().read_bd('V01_r_frame_rate', file_path)
+                fps = all_dict['v01_r_frame_rate']
                 fps = convert_fps(fps).split(' ')[0]
                 db_data = str(convert_duration_sec(float(db_data), float(fps)))
             if 'sample_rate' in header and db_data != 'нет данных':
@@ -1448,6 +2400,8 @@ class VideoInfo(QMainWindow):
         self.colorizeEffect_wt(self.ui.frzDtctButton)
         self.ui.fullDtctButton.setEnabled(True)
         self.colorizeEffect_wt(self.ui.fullDtctButton)
+        # self.ui.migrateButton.setEnabled(True)
+        self.colorizeEffect_wt(self.ui.migrateButton)
         self.ui.tableWidget_01.selectRow(row_position)
         self.ui.tableWidget_01.repaint()  # !!!!
         self.ui.tableWidget_01.setSortingEnabled(True)
@@ -1465,34 +2419,86 @@ class VideoInfo(QMainWindow):
         # row_position = self.ui.tableWidget_01.rowCount()
         # print('row_position:', row_position)
 
+    def update_table_01(self, file_path, row):
+        columns = self.ui.tableWidget_01.columnCount()
+        for col in range(columns):
+            header = self.ui.tableWidget_01.horizontalHeaderItem()
+        # for header in headers:
+            if self.selected_db == 'SQLITE':
+                db_data = DataLite().read_bd(self.read_tbl_name(), header, file_path)
+            else:
+                db_data = DataPos().read_bd(self.read_tbl_name(), header, file_path)
+            # db_data = all_dict[header]
+            # print('header', header)
+            # print('db_data', db_data)
+            if 'frame_rate' in header and db_data != 'нет данных':
+                db_data = convert_fps(db_data)
+            if 'size' in header and db_data != 'нет данных':
+                db_data = convert_bytes(int(db_data), "b")
+            if 'bit_rate' in header and db_data != 'нет данных':
+                db_data = convert_bytes(int(db_data), "bit/s")
+            if 'duration' in header and db_data != 'нет данных':
+                if self.selected_db == 'SQLITE':
+                    fps = DataLite().read_bd(self.read_tbl_name(), 'v01_r_frame_rate', file_path)
+                else:
+                    fps = DataPos().read_bd(self.read_tbl_name(), 'v01_r_frame_rate', file_path)
+                fps = convert_fps(fps).split(' ')[0]
+                db_data = str(convert_duration_sec(float(db_data), float(fps)))
+            if 'sample_rate' in header and db_data != 'нет данных':
+                db_data = convert_khz(db_data)
+            if 'black_start' in header:
+                if db_data != 'нет данных' and db_data != 'не найдено':
+                    db_data = 'найден'
+
+            if 'silence_start' in header:
+                if db_data != 'нет данных' and db_data != 'не найдено':
+                    db_data = 'найден'
+
+            if 'freeze_start' in header:
+                if db_data != 'нет данных' and db_data != 'не найдено':
+                    db_data = 'найден'
+
+    def filter_table_01(self):
+        search_query = self.filter_table.text()
+        file_list_tbl = self.file_queue()
+        if search_query in file_list_tbl:
+            print('Find')
+        else:
+            print('No')
     def create_table_02(self, file_path):
+        tbl_name = self.read_tbl_name()
+        if self.selected_db == 'SQLITE':
+            all_headers = DataLite().read_all_headers(tbl_name)
+            all_data = DataLite().read_all_data_for_file(tbl_name, file_path)
+        else:
+            all_headers = DataPos().read_all_headers(tbl_name)
+            all_data = DataPos().read_all_data_for_file(tbl_name, file_path)
         # all_headers = Data().read_all_data('file_path')
         self.ui.tableWidget_02.setRowCount(0)
-        self.block_table_02(file_path, 'V')
-        self.block_table_02(file_path, 'A')
-        self.block_table_02(file_path, 'S')
-        self.block_table_02(file_path, 'C')
-        self.block_table_02(file_path, 'F')
+        self.block_table_02(file_path, 'v', all_headers, all_data)
+        self.block_table_02(file_path, 'a', all_headers, all_data)
+        self.block_table_02(file_path, 's', all_headers, all_data)
+        self.block_table_02(file_path, 'c', all_headers, all_data)
+        self.block_table_02(file_path, 'f', all_headers, all_data)
 
-    def block_table_02(self, file_path, type_material):
-        all_headers = Data().read_all_data('file_path')
-        all_data = Data().read_all_data(file_path)
+    def block_table_02(self, file_path, type_material, all_headers, all_data):
+        tbl_name = self.read_tbl_name()
         all_dict = dict(zip(all_headers, all_data))
         data_target = False
+        if type_material == 'a' or type_material == 's':
+            all_headers = sorted(all_headers)
         for header in all_headers:
             row_position = self.ui.tableWidget_02.rowCount()
             data = all_dict[header]
             # data = Data().read_bd(header, file_path)  # !!!
             # print('all_dict', all_dict)
-            if header[:1] == f'{type_material}' and data != None and data != 'нет данных':
-                # print('header', header[:1])
-                # print('data', data)
+            if header[:1].startswith(type_material) and data != None and data != 'нет данных':
                 if 'size' in header:
                     data = convert_bytes(int(data), "b")
                 if 'bit_rate' in header:
                     data = convert_bytes(int(data), "bit/s")
                 if 'duration' in header:
-                    fps = Data().read_bd('V01_r_frame_rate', file_path)
+                    fps = all_dict['v01_r_frame_rate']
                     fps = convert_fps(fps).split(' ')[0]
                     data = str(convert_duration_sec(float(data), float(fps)))
                 if 'frame_rate' in header:
@@ -1529,20 +2535,22 @@ class VideoInfo(QMainWindow):
             row_position = self.ui.tableWidget_02.rowCount()
             self.ui.tableWidget_02.insertRow(row_position)
 
-    def click_table(self):
+    def click_table_w(self):
         row_position = self.ui.tableWidget_01.currentRow()
-        # name_01 = self.ui.tableWidget_01.horizontalHeader().sectionClicked.connect(self.click_handler)
         file_path = self.ui.tableWidget_01.item(row_position, 0).text()
-        # # print(self.ui.tableWidget_01.verticalHeaderItem(row_position).text())
         self.create_table_02(file_path)
         self.create_tags(file_path)
         self.show_waves(file_path)
+        self.check_file_path()
         return file_path
 
     def double_click_table(self):
         row_position = self.ui.tableWidget_01.currentRow()
         file_path_video = self.ui.tableWidget_01.item(row_position, 0).text()
-        file_path_image = Data().read_bd('waveform_path', file_path_video)
+        if self.selected_db == 'SQLITE':
+            file_path_image = DataLite().read_bd(self.read_tbl_name(), 'waveform_path', file_path_video)
+        else:
+            file_path_image = DataPos().read_bd(self.read_tbl_name(), 'waveform_path', file_path_video)
         os.startfile(os.path.normpath(file_path_image))
 
     def double_click_video_player(self):
@@ -1553,42 +2561,166 @@ class VideoInfo(QMainWindow):
         self.show_video_info_player(file_path)
         self.video_player()
 
+    def table_01_right_click_min(self):
+        # bar = self.parent.menuBar()
+        top_menu = QMenu()
+
+        menu = top_menu.addMenu("Menu")
+
+        add_files = menu.addAction("Add files ...\t")
+        menu.addSeparator()
+        switch_mode = menu.addAction("Switch ViewMode\t")
+
+        action = menu.exec(QtGui.QCursor.pos())
+
+        if action == add_files:
+            self.prepare_ffprobe()
+        elif action == switch_mode:
+            self.switch_db_editor()
+
+
+    def table_01_right_click_max(self):
+        # bar = self.parent.menuBar()
+        top_menu = QMenu()
+
+        menu = top_menu.addMenu("Menu")
+        file = menu.addMenu("File ...\t")
+
+        add_files = file.addAction("Add files ...\t")
+        del_selected = file.addAction("Delete seleted\t")
+
+        file.addSeparator()
+
+        play_selected = file.addAction("Play selected")
+        open_folder = file.addAction("Open folder")
+
+        scanners = menu.addMenu("Scanners ...\t")
+        loudnorm_scan = scanners.addAction("Run Loudnorm scan selected\t")
+        blackdetect_scan = scanners.addAction("Run Blackdetect scan selected\t")
+        silencedetect_scan = scanners.addAction("Run Silencedetect scan selected\t")
+        freezedetect_scan = scanners.addAction("Run Freezedetect scan selected\t")
+        menu.addSeparator()
+        switch_mode = menu.addAction("Switch ViewMode\t")
+        action = menu.exec(QtGui.QCursor.pos())
+
+        if action == add_files:
+            self.prepare_ffprobe()
+        elif action == del_selected:
+            self.del_selected_rows()
+        elif action == play_selected:
+            self.play_selected()
+        elif action == open_folder:
+            self.open_folder()
+        elif action == loudnorm_scan:
+            self.prepare_loudnorm_selected()
+        elif action == silencedetect_scan:
+            self.prepare_silence_detect_selected()
+        elif action == blackdetect_scan:
+            self.prepare_black_detect_selected()
+        elif action == freezedetect_scan:
+            self.prepare_freeze_detect_selected()
+        elif action == switch_mode:
+            self.switch_db_editor()
+
+    def table_db_right_click_min(self):
+        # bar = self.parent.menuBar()
+        top_menu = QMenu()
+
+        menu = top_menu.addMenu("Menu")
+
+        export_excel = menu.addAction("Export table to Excel\t")
+        menu.addSeparator()
+        switch_mode = menu.addAction("Switch ViewMode\t")
+
+        action = menu.exec(QtGui.QCursor.pos())
+
+        if action == export_excel:
+            self.export_tbl_xlsx()
+        elif action == switch_mode:
+            self.switch_db_editor()
+
+    def table_db_right_click_max(self):
+        # bar = self.parent.menuBar()
+        top_menu = QMenu()
+
+        menu = top_menu.addMenu("Menu")
+        file = menu.addMenu("File ...\t")
+
+        move_to_tbl = file.addAction("Move to table ...\t")
+        del_frm_db = file.addAction("Delete from db\t")
+        move_to_db = file.addAction("Move to server db\t")
+
+        file.addSeparator()
+
+        play_selected = file.addAction("Play selected")
+        open_folder = file.addAction("Open folder")
+
+        scanners = menu.addMenu("DataBase ...\t")
+        reset_scan_results = scanners.addAction("Reset scan results\t")
+        menu.addSeparator()
+        switch_mode = menu.addAction("Switch ViewMode\t")
+
+        action = menu.exec(QtGui.QCursor.pos())
+
+        if action == move_to_tbl:
+            self.move_to_table_01()
+        elif action == del_frm_db:
+            self.del_file_from_db()
+        elif action == play_selected:
+            self.play_selected()
+        elif action == open_folder:
+            self.open_folder()
+        elif action == move_to_db:
+            self.move_to_db()
+        elif action == reset_scan_results:
+            self.reset_mediainfo_db()
+        elif action == switch_mode:
+            self.switch_db_editor()
+
+
     def create_tags(self, file_path):
-        width = Data().read_bd('V01_width', file_path)
-        height = Data().read_bd('V01_height', file_path)
+        tbl_name = self.read_tbl_name()
+        if self.selected_db == 'SQLITE':
+            all_headers = DataLite().read_all_headers(tbl_name)
+            all_data = DataLite().read_all_data_for_file(tbl_name, file_path)
+        else:
+            all_headers = DataPos().read_all_headers(tbl_name)
+            all_data = DataPos().read_all_data_for_file(tbl_name, file_path)
+        all_dict = dict(zip(all_headers, all_data))
+        width = all_dict['v01_width']
+        height = all_dict['v01_height']
         if width != 'нет данных' and height != 'нет данных':
             self.ui.tag_resolution.setText(f'{width} x {height}')
         else:
             self.ui.tag_resolution.setText('')
-        prof = Data().read_bd('V01_profile', file_path)
-        lev = Data().read_bd('V01_level', file_path)
+        prof = all_dict['v01_profile']
+        lev = all_dict['v01_level']
         if prof != 'нет данных' and lev != 'нет данных':
             self.ui.tag_v1_profile.setText(f'{prof} {int(lev) / 10}')
         else:
             self.ui.tag_v1_profile.setText('')
 
-        self.ui.tag_file_name.setText(self.prepare_tag('file_name', file_path))
-        self.ui.tag_file_path.setText(self.prepare_tag('file_path', file_path))
-        self.ui.tag_v1_codec_name.setText(self.prepare_tag('V01_codec_name', file_path))
-        self.ui.tag_a1_codec_name.setText(self.prepare_tag('A01_codec_name', file_path))
-        self.ui.tag_a2_codec_name.setText(self.prepare_tag('A02_codec_name', file_path))
-        self.ui.tag_a1_sample_rate.setText(self.prepare_tag('A01_sample_rate', file_path))
-        self.ui.tag_a2_sample_rate.setText(self.prepare_tag('A02_sample_rate', file_path))
-        self.ui.tag_a1_channel_layout.setText(self.prepare_tag('A01_channel_layout', file_path))
-        self.ui.tag_a2_channel_layout.setText(self.prepare_tag('A02_channel_layout', file_path))
-        self.ui.tag_s1_title.setText(self.prepare_tag('S01_title', file_path))
-        self.ui.tag_s2_title.setText(self.prepare_tag('S02_title', file_path))
-        self.ui.tag_s1_language.setText(self.prepare_tag('S01_language', file_path))
-        self.ui.tag_s2_language.setText(self.prepare_tag('S02_language', file_path))
-        self.ui.tag_v1_r_frame_rate.setText(str(self.prepare_tag('V01_r_frame_rate', file_path)))
-        self.ui.tag_duration.setText(str(self.prepare_tag('F_duration', file_path)))
+        self.ui.tag_file_name.setText(self.prepare_tag('file_name', all_dict))
+        self.ui.tag_file_path.setText(self.prepare_tag('file_path', all_dict))
+        self.ui.tag_v1_codec_name.setText(self.prepare_tag('v01_codec_name', all_dict))
+        self.ui.tag_a1_codec_name.setText(self.prepare_tag('a01_codec_name', all_dict))
+        self.ui.tag_a2_codec_name.setText(self.prepare_tag('a02_codec_name', all_dict))
+        self.ui.tag_a1_sample_rate.setText(self.prepare_tag('a01_sample_rate', all_dict))
+        self.ui.tag_a2_sample_rate.setText(self.prepare_tag('a02_sample_rate', all_dict))
+        self.ui.tag_a1_channel_layout.setText(self.prepare_tag('a01_channel_layout', all_dict))
+        self.ui.tag_a2_channel_layout.setText(self.prepare_tag('a02_channel_layout', all_dict))
+        self.ui.tag_s1_title.setText(self.prepare_tag('S01_title', all_dict))
+        self.ui.tag_s2_title.setText(self.prepare_tag('S02_title', all_dict))
+        self.ui.tag_s1_language.setText(self.prepare_tag('S01_language', all_dict))
+        self.ui.tag_s2_language.setText(self.prepare_tag('S02_language', all_dict))
+        self.ui.tag_v1_r_frame_rate.setText(str(self.prepare_tag('v01_r_frame_rate', all_dict)))
+        self.ui.tag_duration.setText(str(self.prepare_tag('f_duration', all_dict)))
 
-    def prepare_tag(self, header_tag, file_path):
-        # all_headers = Data().read_all_data('file_path')
-        # all_data = Data().read_all_data(file_path)
-        # all_dict = dict(zip(all_headers, all_data))
-        # tag = all_dict[header_tag]
-        tag = Data().read_bd(header_tag, file_path)
+    def prepare_tag(self, header_tag, all_dict):
+        try:
+            tag = all_dict[header_tag]
+        except KeyError:
+            tag = ''
         if tag is None or tag == 'нет данных':
             tag = ''
         elif 'frame_rate' in header_tag:
@@ -1597,8 +2729,8 @@ class VideoInfo(QMainWindow):
             tag = os.path.split(tag)[0]
         elif 'sample_rate' in header_tag:
             tag = convert_khz(tag)
-        elif 'F_duration' in header_tag:
-            fps = Data().read_bd('V01_r_frame_rate', file_path)
+        elif 'f_duration' in header_tag:
+            fps = all_dict['v01_r_frame_rate']
             fps = convert_fps(fps).split(' ')[0]
             tag = str(convert_duration_sec(float(tag), float(fps)))
             # tag = datetime.timedelta(seconds=(round(float(tag), 0)))
@@ -1641,26 +2773,26 @@ class VideoInfo(QMainWindow):
                 header = self.ui.tableWidget_01.horizontalHeaderItem(col).text()
                 data = self.ui.tableWidget_01.item(row, col).text()
                 if data != 'нет данных':
-                    if self.header_rename('F_bit_rate') in header and not isclose(float(data.split(' ')[0]), v_bit_rate,
-                                                                                  abs_tol=1):
+                    if self.header_rename('f_bit_rate') in header:
+                        if not isclose(float(data.split(' ')[0]), v_bit_rate, abs_tol=1):
+                            self.ui.tableWidget_01.item(row, col).setBackground(error_red_color)
+                    if self.header_rename('v01_codec_name') in header and data != codec:
                         self.ui.tableWidget_01.item(row, col).setBackground(error_red_color)
-                    if self.header_rename('V01_codec_name') in header and data != codec:
+                    if self.header_rename('v01_width') in header and data != width:
                         self.ui.tableWidget_01.item(row, col).setBackground(error_red_color)
-                    if self.header_rename('V01_width') in header and data != width:
+                    if self.header_rename('v01_height') in header and data != height:
                         self.ui.tableWidget_01.item(row, col).setBackground(error_red_color)
-                    if self.header_rename('V01_height') in header and data != height:
+                    if self.header_rename('v01_display_aspect_ratio') in header and data != dar:
                         self.ui.tableWidget_01.item(row, col).setBackground(error_red_color)
-                    if self.header_rename('V01_display_aspect_ratio') in header and data != dar:
+                    if self.header_rename('v01_r_frame_rate') in header and str(data.split(' ')[0]) != str(frame_rate):
                         self.ui.tableWidget_01.item(row, col).setBackground(error_red_color)
-                    if self.header_rename('V01_r_frame_rate') in header and str(data.split(' ')[0]) != str(frame_rate):
+                    if self.header_rename('a01_sample_rate') in header and str(data.split(' ')[0]) != str(sample_rate):
                         self.ui.tableWidget_01.item(row, col).setBackground(error_red_color)
-                    if self.header_rename('A01_sample_rate') in header and str(data.split(' ')[0]) != str(sample_rate):
+                    if self.header_rename('a01_codec_name') in header and data != codec_aud:
                         self.ui.tableWidget_01.item(row, col).setBackground(error_red_color)
-                    if self.header_rename('A01_codec_name') in header and data != codec_aud:
+                    if self.header_rename('a01_channels') in header and data != channels:
                         self.ui.tableWidget_01.item(row, col).setBackground(error_red_color)
-                    if self.header_rename('A01_channels') in header and data != channels:
-                        self.ui.tableWidget_01.item(row, col).setBackground(error_red_color)
-                    if self.header_rename('A01_bit_rate') in header and data != 'нет данных' and not isclose(
+                    if self.header_rename('a01_bit_rate') in header and data != 'нет данных' and not isclose(
                             float(data.split(' ')[0]), a_bit_rate, abs_tol=60):
                         self.ui.tableWidget_01.item(row, col).setBackground(error_red_color)
                     if self.header_rename('audio_streams') in header and data != '1':
@@ -1700,15 +2832,139 @@ class VideoInfo(QMainWindow):
                 if self.header_rename('freeze_start') in header:
                     if data == 'найден':
                         self.ui.tableWidget_01.item(row, col).setBackground(error_red_color)
+        self.check_file_path()
         # duration = Data().read_bd('F_duration', file_path)
         # self.ui.tag_duration.setText(duration)
+
+    def check_file_path(self):
+        rows = self.ui.tableWidget_01.rowCount()
+        for row in range(rows):
+            file_path = self.ui.tableWidget_01.item(row, 0).text()
+            columns = self.ui.tableWidget_01.columnCount()
+            if not os.path.exists(file_path):
+                self.ui.tableWidget_01.item(row, 1).setText('OFFLINE_' + os.path.basename(file_path))
+                for col in range(columns):
+                    self.ui.tableWidget_01.item(row, col).setForeground(self.yell_dark)
+                # print('file offline')
+            else:
+                self.ui.tableWidget_01.item(row, 1).setText(os.path.basename(file_path))
+                for col in range(columns):
+                    self.ui.tableWidget_01.item(row, col).setForeground(self.white)
+                # self.update_table_01(file_path, row)
+
+    def check_data_base(self):
+        self.list_widget_offline = QListWidget()
+        self.list_widget_offline.setWindowTitle('Offline files')
+        self.list_widget_offline.setMinimumWidth(700)
+        tbl_name = self.read_tbl_name()
+        offline_list = []
+
+        if self.selected_db == 'SQLITE':
+            db_file_list = DataLite().read_all_files(tbl_name)
+            print(db_file_list)
+        else:
+            db_file_list = DataPos().read_all_files(tbl_name)
+        for file_path in db_file_list:
+            if not os.path.exists(file_path):
+                offline_list.append(file_path)
+                print(file_path, 'offline')
+        if offline_list == []:
+            self.list_widget_offline.addItem("No offline. It's OK!")
+        else:
+            self.list_widget_offline.addItems(offline_list)
+        self.list_widget_offline.show()
+
 
     def del_row(self):
         row_position = self.ui.tableWidget_01.currentRow()
         self.ui.tableWidget_01.removeRow(row_position)
+        if self.ui.tableWidget_01.rowCount() == 0:
+            self.ui.delButton.setEnabled(False)
+            self.colorizeEffect_gr(self.ui.delButton)
+            self.ui.playButton.setEnabled(False)
+            self.colorizeEffect_gr(self.ui.playButton)
+            self.ui.openButton.setEnabled(False)
+            self.colorizeEffect_gr(self.ui.openButton)
+            self.ui.r128DtctButton.setEnabled(False)
+            self.colorizeEffect_gr(self.ui.r128DtctButton)
+            self.ui.queueButton.setEnabled(False)
+            self.colorizeEffect_gr(self.ui.queueButton)
+            self.ui.queueButton.hide()
+            self.ui.blckDtctButton.setEnabled(False)
+            self.colorizeEffect_gr(self.ui.blckDtctButton)
+            self.ui.slncDtctButton.setEnabled(False)
+            self.colorizeEffect_gr(self.ui.slncDtctButton)
+            self.ui.frzDtctButton.setEnabled(False)
+            self.colorizeEffect_gr(self.ui.frzDtctButton)
+            self.ui.fullDtctButton.setEnabled(False)
+            self.colorizeEffect_gr(self.ui.fullDtctButton)
+            self.ui.tableWidget_02.setRowCount(0)
+            self.ui.wave_view.setPixmap(QPixmap(u":/imgs/img/WaveForm_04.png"))
+            self.ui.r128_loudness.setText('LOUDNESS METER')
+
+
+    def del_selected_rows(self):
+        rows = self.selected_rows()
+        for row in sorted(rows, reverse=True):
+            self.ui.tableWidget_01.removeRow(row)
+            if row == 0:
+                self.ui.tableWidget_01.selectRow(row)
+            else:
+                self.ui.tableWidget_01.selectRow(row-1)
+            if self.ui.tableWidget_01.rowCount() == 0:
+                self.ui.delButton.setEnabled(False)
+                self.colorizeEffect_gr(self.ui.delButton)
+                self.ui.playButton.setEnabled(False)
+                self.colorizeEffect_gr(self.ui.playButton)
+                self.ui.openButton.setEnabled(False)
+                self.colorizeEffect_gr(self.ui.openButton)
+                self.ui.r128DtctButton.setEnabled(False)
+                self.colorizeEffect_gr(self.ui.r128DtctButton)
+                self.ui.queueButton.setEnabled(False)
+                self.colorizeEffect_gr(self.ui.queueButton)
+                self.ui.queueButton.hide()
+                self.ui.blckDtctButton.setEnabled(False)
+                self.colorizeEffect_gr(self.ui.blckDtctButton)
+                self.ui.slncDtctButton.setEnabled(False)
+                self.colorizeEffect_gr(self.ui.slncDtctButton)
+                self.ui.frzDtctButton.setEnabled(False)
+                self.colorizeEffect_gr(self.ui.frzDtctButton)
+                self.ui.fullDtctButton.setEnabled(False)
+                self.colorizeEffect_gr(self.ui.fullDtctButton)
+                self.ui.tableWidget_02.setRowCount(0)
+                self.ui.wave_view.setPixmap(QPixmap(u":/imgs/img/WaveForm_04.png"))
+                self.ui.r128_loudness.setText('LOUDNESS METER')
+        self.error_highlight()
+
+
         # self.ui.tableWidget_01.focusPreviousChild()
         # a1_ch = Data().read_bd('A1_channel_layout', file_path)
         # self.ui.tag_file_path.setText(a1_ch)
+
+    def check_table_bd(self):
+        self.sqlite_model.select()
+        if self.posql_model.rowCount() == 0:
+            self.ui.move_to_tableButton.setEnabled(False)
+            self.colorizeEffect_gr(self.ui.move_to_tableButton)
+            self.ui.delete_from_dbButton.setEnabled(False)
+            self.colorizeEffect_gr(self.ui.delete_from_dbButton)
+            self.ui.move_to_dbButton.setEnabled(False)
+            self.colorizeEffect_gr(self.ui.move_to_dbButton)
+            self.ui.playButton.setEnabled(False)
+            self.colorizeEffect_gr(self.ui.playButton)
+            self.ui.openButton.setEnabled(False)
+            self.colorizeEffect_gr(self.ui.openButton)
+        if self.sqlite_model.rowCount() != 0 and self.ui.tableWidget_01.rowCount() != 0:
+            self.ui.move_to_tableButton.setEnabled(True)
+            self.colorizeEffect_wt(self.ui.move_to_tableButton)
+            self.ui.delete_from_dbButton.setEnabled(True)
+            self.colorizeEffect_wt(self.ui.delete_from_dbButton)
+            self.ui.move_to_dbButton.setEnabled(True)
+            self.colorizeEffect_wt(self.ui.move_to_dbButton)
+            self.ui.playButton.setEnabled(True)
+            self.colorizeEffect_wt(self.ui.playButton)
+            self.ui.openButton.setEnabled(True)
+            self.colorizeEffect_wt(self.ui.openButton)
 
     def clear_table_01(self):
         self.ui.tableWidget_01.setRowCount(0)
@@ -1737,14 +2993,27 @@ class VideoInfo(QMainWindow):
             return queue_list
 
     def play_selected(self):
-        row_position = self.ui.tableWidget_01.currentRow()
-        file_path = self.ui.tableWidget_01.item(row_position, 0).text()
-        os.startfile(os.path.normpath(file_path))
+        if self.ui.tableWidget_01.isVisible():
+            row_position = self.ui.tableWidget_01.currentRow()
+            try:
+                file_path = self.ui.tableWidget_01.item(row_position, 0).text()
+            except Exception:
+                pass
+        else:
+            file_path = self.selected_db_file_path()
+
+        try:
+            os.startfile(os.path.normpath(file_path))
+        except Exception:
+            pass
 
     def open_folder(self):
         try:
-            row_position = self.ui.tableWidget_01.currentRow()
-            file_path = self.ui.tableWidget_01.item(row_position, 0).text()
+            if self.ui.tableWidget_01.isVisible():
+                row_position = self.ui.tableWidget_01.currentRow()
+                file_path = self.ui.tableWidget_01.item(row_position, 0).text()
+            else:
+                file_path = self.selected_db_file_path()
             subprocess.Popen(fr'explorer /select,"{os.path.abspath(file_path)}"')
         except Exception:
             print('Файл не выделен')
@@ -1754,45 +3023,43 @@ class VideoInfo(QMainWindow):
         file_path = self.dialog.file_path.text()
         subprocess.Popen(fr'explorer /select,"{os.path.abspath(file_path)}"')
 
+    def progress_bar(self):
+        progress_dialog = QProgressDialog("Start scan", "Cancel", 0, 100, self)
+        progress_dialog.setWindowTitle("Processing...")
+        progress_dialog.setWindowModality(Qt.WindowModal)
+        progress_dialog.setMinimumDuration(0)
+        progress_dialog.setFixedSize(650, 150)
+        progress_dialog.setStyleSheet("QPushButton {color: white; background-color:rgba(255,255,255,30);"
+                                           "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
+                                           "QPushButton:hover {background-color:rgba(255,255,255,50);}"
+                                           "QPushButton:pressed{background-color:rgba(255,255,255,70);}")
+        return progress_dialog
+
+    def prepare_loudnorm_selected(self):
+        file_list = self.selected_file_list()
+        progress_dialog = self.progress_bar()
+        self.scan_loudnorm(file_list, progress_dialog)
+        progress_dialog.setValue(100)
+
     def prepare_loudnorm_single(self):
         row_position = self.ui.tableWidget_01.currentRow()
         file_path = self.ui.tableWidget_01.item(row_position, 0).text()
-        progress_dialog_r128 = QProgressDialog("Loudness scan", "Cancel", 0, 100, self)
-        progress_dialog_r128.setWindowTitle("Processing...")
-        progress_dialog_r128.setWindowModality(Qt.WindowModal)
-        progress_dialog_r128.setMinimumDuration(0)
-        progress_dialog_r128.setMinimumSize(400, 150)
-        progress_dialog_r128.setStyleSheet("QPushButton {color: white; background-color:rgba(255,255,255,30);"
-                                           "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
-                                           "QPushButton:hover {background-color:rgba(255,255,255,50);}"
-                                           "QPushButton:pressed{background-color:rgba(255,255,255,70);}")
-        self.scan_loudnorm((file_path,), progress_dialog_r128)
-        progress_dialog_r128.setValue(100)
+        progress_dialog = self.progress_bar()
+        self.scan_single_loudnorm(file_path, progress_dialog)
+        progress_dialog.close()
 
     def prepare_loudnorm_multi(self):
         tbl_file_list = self.file_queue()
-        progress_dialog_r128 = QProgressDialog("Loudness scan", "Cancel", 0, 100, self)
-        progress_dialog_r128.setWindowTitle("Processing...")
-        progress_dialog_r128.setWindowModality(Qt.WindowModal)
-        progress_dialog_r128.setMinimumDuration(0)
-        progress_dialog_r128.setMinimumSize(400, 150)
-        progress_dialog_r128.setStyleSheet("QPushButton {color: white; background-color:rgba(255,255,255,30);"
-                                           "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
-                                           "QPushButton:hover {background-color:rgba(255,255,255,50);}"
-                                           "QPushButton:pressed{background-color:rgba(255,255,255,70);}")
-
-        self.scan_loudnorm(tuple(tbl_file_list), progress_dialog_r128)
+        progress_dialog = self.progress_bar()
+        self.scan_loudnorm(tuple(tbl_file_list), progress_dialog)
         # process = multiprocessing.Process(target=self.scan_loudnorm(tuple(tbl_file_list), progress_dialog_r128))
         # process.start()
-        progress_dialog_r128.setValue(100)
-        progress_dialog_r128.repaint()
+        progress_dialog.setValue(100)
+        progress_dialog.repaint()
 
-    # def create_image_file(self):
-    #     row_position = self.ui.tableWidget_01.currentRow()
-    #     file_path = self.ui.tableWidget_01.item(row_position, 0).text()
-    #     WaveformSingle(file_path)
 
-    def backgound_scan_loudnorm(self, file_list, progress_dialog_r128):
+    def backgound_scan_loudnorm(self, file_list, progress_dialog):
+        tbl_name = self.read_tbl_name()
         completed = False
         r128_i = self.ui_set.r128_i_txt.text()
         r128_lra = self.ui_set.r128_lra_txt.text()
@@ -1806,20 +3073,25 @@ class VideoInfo(QMainWindow):
         self.ui.tableWidget_01.setColumnCount(3)
         total_files = len(file_list)
         progress = int(1 / total_files * 100)
-        progress_dialog_r128.setValue(progress)
+        progress_dialog.setValue(progress)
         QApplication.processEvents()
         for i, file_path in enumerate(file_list):
-            progress_dialog_r128.setLabelText(f'{i + 1}/{total_files}  Loudness scan\n{file_path}')
-            if progress_dialog_r128.wasCanceled():
+            self.progress_dialog_label.setText(f'{i + 1}/{total_files}  Loudness scan\n{file_path}')
+            progress_dialog.setLabel(self.progress_dialog_label)
+            QApplication.processEvents()
+            if progress_dialog.wasCanceled():
                 completed = False
                 break
-            db_wf_file_path = Data().read_bd('waveform_path', file_path)
+            if self.selected_db == 'SQLITE':
+                db_wf_file_path = DataLite().read_bd(tbl_name, 'waveform_path', file_path)
+            else:
+                db_wf_file_path = DataPos().read_bd(tbl_name, 'waveform_path', file_path)
             if db_wf_file_path == 'нет данных':
                 # self.alert.show()
                 try:
                     print(now())
                     print('Запуск анализа уровня громкости файла', file_path)
-                    R128(file_path, r128_i, r128_lra, r128_tp)
+                    R128(self.selected_db, tbl_name, file_path, r128_i, r128_lra, r128_tp)
                     print(now())
                     print('Анализ уровня громкости файла', file_path, 'завершён')
                     self.create_table_bg(file_path, 'Loudnorm', 'Выполнено')
@@ -1835,12 +3107,13 @@ class VideoInfo(QMainWindow):
                 print('Сканирование R128 файла', file_path, 'уже проводилось')
                 self.create_table_bg(file_path, 'Loudnorm', 'Сканирование проводилось')
             progress = int((i + 1) / total_files * 100)
-            progress_dialog_r128.setValue(progress)
+            progress_dialog.setValue(progress)
             QApplication.processEvents()
             completed = True
         return completed
 
-    def backgound_scan_blackdetect(self, file_list, progress_dialog_blck):
+    def backgound_scan_blackdetect(self, file_list, progress_dialog):
+        tbl_name = self.read_tbl_name()
         blck_dur = self.ui_set.blck_dur_txt.text()
         blck_thr = self.ui_set.blck_thr_txt.text()
         blck_tc_in = self.ui_set.blck_tc_in.text()
@@ -1853,19 +3126,29 @@ class VideoInfo(QMainWindow):
         self.ui.tableWidget_01.setColumnCount(3)
         total_files = len(file_list)
         progress = int(1 / total_files * 100)
-        progress_dialog_blck.setValue(progress)
+        progress_dialog.setValue(progress)
         QApplication.processEvents()
         for i, file_path in enumerate(file_list):
-            progress_dialog_blck.setLabelText(f'{i + 1}/{total_files}  BlackDetect scan\n{file_path}')
-            if progress_dialog_blck.wasCanceled():
+            self.progress_dialog_label.setText(f'{i + 1}/{total_files}  BlackDetect scan\n{file_path}')
+            progress_dialog.setLabel(self.progress_dialog_label)
+            QApplication.processEvents()
+            if progress_dialog.wasCanceled():
                 break
-            db_wf_file_path = Data().read_bd('black_duration', file_path)
+            if self.selected_db == 'SQLITE':
+                db_wf_file_path = DataLite().read_bd(tbl_name, 'black_duration', file_path)
+                duration = DataLite().read_bd(tbl_name, 'F_duration', file_path)
+            else:
+                db_wf_file_path = DataPos().read_bd(tbl_name, 'black_duration', file_path)
+                duration = DataPos().read_bd(tbl_name, 'F_duration', file_path)
             if db_wf_file_path == 'нет данных':
-                # self.alert.show()
                 try:
                     print(now())
                     print('Анализ чёрного поля файла', file_path)
-                    BlackDetect(file_path, blck_dur, blck_thr, blck_tc_in, blck_tc_out)
+                    if self.ui_set.blackCheckBox.isChecked():
+                        blck_tc_fin = float(duration) - convert_tf_to_sec(blck_tc_out)
+                        BlackDetect(self.selected_db, tbl_name, file_path, blck_dur, blck_thr, blck_tc_fin)
+                    else:
+                        BlackDetect(self.selected_db, tbl_name, file_path, blck_dur, blck_thr, blck_tc_in, blck_tc_out)
                     print(now())
                     print('Анализ завершён')
                     self.create_table_bg(file_path, 'BlackDetect', 'Выполнено')
@@ -1881,10 +3164,11 @@ class VideoInfo(QMainWindow):
                 print('Сканирование чёрного поля файла', file_path, 'уже проводилось')
                 self.create_table_bg(file_path, 'BlackDetect', 'Сканирование проводилось')
             progress = int((i + 1) / total_files * 100)
-            progress_dialog_blck.setValue(progress)
+            progress_dialog.setValue(progress)
             QApplication.processEvents()
 
-    def backgound_scan_silencedetect(self, file_list, progress_dialog_slnc):
+    def backgound_scan_silencedetect(self, file_list, progress_dialog):
+        tbl_name = self.read_tbl_name()
         slnc_dur = self.ui_set.slnc_dur_txt.text()
         slnc_noize = self.ui_set.slnc_noize_txt.text()
         slnc_tc_in = self.ui_set.slnc_tc_in.text()
@@ -1897,19 +3181,31 @@ class VideoInfo(QMainWindow):
         self.ui.tableWidget_01.setColumnCount(3)
         total_files = len(file_list)
         progress = int(1 / total_files * 100)
-        progress_dialog_slnc.setValue(progress)
+        progress_dialog.setValue(progress)
         QApplication.processEvents()
         for i, file_path in enumerate(file_list):
-            progress_dialog_slnc.setLabelText(f'{i + 1}/{total_files}  SilenceDetect scan\n{file_path}')
-            if progress_dialog_slnc.wasCanceled():
+            self.progress_dialog_label.setText(f'{i + 1}/{total_files}  SilenceDetect scan\n{file_path}')
+            progress_dialog.setLabel(self.progress_dialog_label)
+            QApplication.processEvents()
+            if progress_dialog.wasCanceled():
                 break
-            db_wf_file_path = Data().read_bd('silence_duration', file_path)
+            if self.selected_db == 'SQLITE':
+                db_wf_file_path = DataLite().read_bd(tbl_name, 'silence_duration', file_path)
+                duration = DataLite().read_bd(tbl_name, 'F_duration', file_path)
+            else:
+                db_wf_file_path = DataPos().read_bd(tbl_name, 'silence_duration', file_path)
+                duration = DataPos().read_bd(tbl_name, 'F_duration', file_path)
             if db_wf_file_path == 'нет данных':
                 # self.alert.show()
                 try:
                     print(now())
                     print('Анализ пропусков звука в', file_path)
-                    SilenceDetect(file_path, slnc_dur, slnc_noize, slnc_tc_in, slnc_tc_out)
+                    if self.ui_set.silenceCheckBox.isChecked():
+                        slnc_tc_fin = float(duration) - convert_tf_to_sec(slnc_tc_out)
+                        SilenceDetect(self.selected_db, tbl_name, file_path, slnc_dur, slnc_noize, slnc_tc_fin)
+                    else:
+                        SilenceDetect(self.selected_db, tbl_name, file_path, slnc_dur, slnc_noize, slnc_tc_in,
+                                      slnc_tc_out)
                     print(now())
                     print('Анализ завершён')
                     self.create_table_bg(file_path, 'SilenceDetect', 'Выполнено')
@@ -1925,10 +3221,11 @@ class VideoInfo(QMainWindow):
                 print('Сканирование пропусков звука в', file_path, 'уже проводилось')
                 self.create_table_bg(file_path, 'SilenceDetect', 'Сканирование проводилось')
             progress = int((i + 1) / total_files * 100)
-            progress_dialog_slnc.setValue(progress)
+            progress_dialog.setValue(progress)
             QApplication.processEvents()
 
-    def backgound_scan_freezedetect(self, file_list, progress_dialog_frz):
+    def backgound_scan_freezedetect(self, file_list, progress_dialog):
+        tbl_name = self.read_tbl_name()
         frz_dur = self.ui_set.frz_dur_txt.text()
         frz_noize = self.ui_set.frz_noize_txt.text()
         frz_tc_in = self.ui_set.frz_tc_in.text()
@@ -1941,19 +3238,30 @@ class VideoInfo(QMainWindow):
         self.ui.tableWidget_01.setColumnCount(3)
         total_files = len(file_list)
         progress = int(1 / total_files * 100)
-        progress_dialog_frz.setValue(progress)
+        progress_dialog.setValue(progress)
         QApplication.processEvents()
         for i, file_path in enumerate(file_list):
-            progress_dialog_frz.setLabelText(f'{i + 1}/{total_files}  FreezeDetect scan\n{file_path}')
-            if progress_dialog_frz.wasCanceled():
+            self.progress_dialog_label.setText(f'{i + 1}/{total_files}  FreezeDetect scan\n{file_path}')
+            progress_dialog.setLabel(self.progress_dialog_label)
+            QApplication.processEvents()
+            if progress_dialog.wasCanceled():
                 break
-            db_wf_file_path = Data().read_bd('freeze_duration', file_path)
+            if self.selected_db == 'SQLITE':
+                db_wf_file_path = DataLite().read_bd(tbl_name, 'freeze_duration', file_path)
+                duration = DataLite().read_bd(tbl_name, 'F_duration', file_path)
+            else:
+                db_wf_file_path = DataPos().read_bd(tbl_name, 'freeze_duration', file_path)
+                duration = DataPos().read_bd(tbl_name, 'F_duration', file_path)
             if db_wf_file_path == 'нет данных':
                 # self.alert.show()
                 try:
                     print(now())
                     print('Анализ стоп-кадров в', file_path)
-                    FreezeDetect(file_path, frz_dur, frz_noize, frz_tc_in, frz_tc_out)
+                    if self.ui_set.freezeCheckBox.isChecked():
+                        frz_tc_fin = float(duration) - convert_tf_to_sec(frz_tc_out)
+                        FreezeDetect(self.selected_db, tbl_name, file_path, frz_dur, frz_noize, frz_tc_fin)
+                    else:
+                        FreezeDetect(self.selected_db, tbl_name, file_path, frz_dur, frz_noize, frz_tc_in, frz_tc_out)
                     print(now())
                     print('Анализ завершён')
                     self.create_table_bg(file_path, 'FreezeDetect', 'Выполнено')
@@ -1969,10 +3277,11 @@ class VideoInfo(QMainWindow):
                 print('Анализ стоп-кадров в', file_path, 'уже проводился')
                 self.create_table_bg(file_path, 'FreezeDetect', 'Сканирование проводилось')
             progress = int((i + 1) / total_files * 100)
-            progress_dialog_frz.setValue(progress)
+            progress_dialog.setValue(progress)
             QApplication.processEvents()
 
-    def backgound_fullscan_loudnorm(self, file_list, progress_dialog_r128):
+    def backgound_fullscan_loudnorm(self, file_list, progress_dialog):
+        tbl_name = self.read_tbl_name()
         complited = False
         r128_i = self.ui_set.r128_i_txt.text()
         r128_lra = self.ui_set.r128_lra_txt.text()
@@ -1984,41 +3293,47 @@ class VideoInfo(QMainWindow):
         self.ui.tableWidget_01.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         total_files = len(file_list)
         progress = int(1 / total_files * 100)
-        progress_dialog_r128.setValue(progress)
+        progress_dialog.setValue(progress)
         QApplication.processEvents()
         for i, file_path in enumerate(file_list):
-            progress_dialog_r128.setLabelText(f'{i + 1}/{total_files}  Loudness scan\n{file_path}')
-            if progress_dialog_r128.wasCanceled():
+            self.progress_dialog_label.setText(f'{i + 1}/{total_files}  Loudness scan\n{file_path}')
+            progress_dialog.setLabel(self.progress_dialog_label)
+            QApplication.processEvents()
+            if progress_dialog.wasCanceled():
                 complited = False
                 break
-            db_wf_file_path = Data().read_bd('waveform_path', file_path)
+            if self.selected_db == 'SQLITE':
+                db_wf_file_path = DataLite().read_bd(tbl_name, 'waveform_path', file_path)
+            else:
+                db_wf_file_path = DataPos().read_bd(tbl_name, 'waveform_path', file_path)
             if db_wf_file_path == 'нет данных':
                 # self.alert.show()
                 try:
                     print(now())
                     print('Запуск анализа уровня громкости файла', file_path)
-                    R128(file_path, r128_i, r128_lra, r128_tp)
+                    R128(self.selected_db, tbl_name, file_path, r128_i, r128_lra, r128_tp)
                     print(now())
                     print('Анализ уровня громкости файла', file_path, 'завершён')
-                    self.create_table_bg_full(file_path, 'Loudness', 'Выполнено')
+                    self.create_table_bg_full(file_path, i, 'Loudness', 'Выполнено')
                 except Exception:
                     print(now())
                     print('Ошибка анализа уровня громкости')
-                    self.create_table_bg_full(file_path, 'Loudness', 'Ошибка')
+                    self.create_table_bg_full(file_path, i, 'Loudness', 'Ошибка')
                     pass
                 # self.error_highlight()
                 # self.alert.close()
             else:
                 print(now())
                 print('Сканирование R128 файла', file_path, 'уже проводилось')
-                self.create_table_bg_full(file_path, 'Loudness', 'Сканирование проводилось')
+                self.create_table_bg_full(file_path, i, 'Loudness', 'Сканирование проводилось')
             progress = int((i + 1) / total_files * 100)
-            progress_dialog_r128.setValue(progress)
+            progress_dialog.setValue(progress)
             QApplication.processEvents()
             complited = True
         return complited
 
-    def backgound_fullscan_blackdetect(self, file_list, progress_dialog_blck):
+    def backgound_fullscan_blackdetect(self, file_list, progress_dialog):
+        tbl_name = self.read_tbl_name()
         complited = False
         blck_dur = self.ui_set.blck_dur_txt.text()
         blck_thr = self.ui_set.blck_thr_txt.text()
@@ -2028,21 +3343,32 @@ class VideoInfo(QMainWindow):
         self.ui.tableWidget_01.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         total_files = len(file_list)
         progress = int(1 / total_files * 100)
-        progress_dialog_blck.setValue(progress)
+        progress_dialog.setValue(progress)
         QApplication.processEvents()
         for i, file_path in enumerate(file_list):
-            progress_dialog_blck.setLabelText(f'{i + 1}/{total_files}  BlackDetect scan\n{file_path}')
-            if progress_dialog_blck.wasCanceled():
+            self.progress_dialog_label.setText(f'{i + 1}/{total_files}  BlackDetect scan\n{file_path}')
+            progress_dialog.setLabel(self.progress_dialog_label)
+            QApplication.processEvents()
+            if progress_dialog.wasCanceled():
                 status = 'Отменено'
                 complited = False
                 self.create_table_bg_full(file_path, i, 'BlackDetect', status)
                 break
-            db_wf_file_path = Data().read_bd('black_duration', file_path)
+            if self.selected_db == 'SQLITE':
+                db_wf_file_path = DataLite().read_bd(tbl_name, 'black_duration', file_path)
+                duration = DataLite().read_bd(tbl_name, 'F_duration', file_path)
+            else:
+                db_wf_file_path = DataPos().read_bd(tbl_name, 'black_duration', file_path)
+                duration = DataPos().read_bd(tbl_name, 'F_duration', file_path)
             if db_wf_file_path == 'нет данных':
                 try:
                     print(now())
                     print('Анализ чёрного поля файла', file_path)
-                    BlackDetect(file_path, blck_dur, blck_thr, blck_tc_in, blck_tc_out)
+                    if self.ui_set.blackCheckBox.isChecked():
+                        blck_tc_fin = float(duration) - convert_tf_to_sec(blck_tc_out)
+                        BlackDetect(self.selected_db, tbl_name, file_path, blck_dur, blck_thr, blck_tc_fin)
+                    else:
+                        BlackDetect(self.selected_db, tbl_name, file_path, blck_dur, blck_thr, blck_tc_in, blck_tc_out)
                     print(now())
                     print('Анализ завершён')
                     status = 'Выполнено'
@@ -2057,12 +3383,13 @@ class VideoInfo(QMainWindow):
                 status = 'Сканирование проводилось'
             self.create_table_bg_full(file_path, i, 'BlackDetect', status)
             progress = int((i + 1) / total_files * 100)
-            progress_dialog_blck.setValue(progress)
+            progress_dialog.setValue(progress)
             QApplication.processEvents()
             complited = True
         return complited
 
-    def backgound_fullscan_silencedetect(self, file_list, progress_dialog_r128):
+    def backgound_fullscan_silencedetect(self, file_list, progress_dialog):
+        tbl_name = self.read_tbl_name()
         complited = False
         slnc_dur = self.ui_set.slnc_dur_txt.text()
         slnc_noize = self.ui_set.slnc_noize_txt.text()
@@ -2074,22 +3401,32 @@ class VideoInfo(QMainWindow):
         self.ui.tableWidget_01.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         total_files = len(file_list)
         progress = int(1 / total_files * 100)
-        progress_dialog_r128.setValue(progress)
+        progress_dialog.setValue(progress)
         QApplication.processEvents()
         for i, file_path in enumerate(file_list):
-            progress_dialog_r128.setLabelText(f'{i + 1}/{total_files}  SilenceDetect scan\n{file_path}')
-            if progress_dialog_r128.wasCanceled():
+            self.progress_dialog_label.setText(f'{i + 1}/{total_files}  SilenceDetect scan\n{file_path}')
+            progress_dialog.setLabel(self.progress_dialog_label)
+            QApplication.processEvents()
+            if progress_dialog.wasCanceled():
                 complited = False
                 status = 'Отменено'
                 self.create_table_bg_full(file_path, i, 'SilenceDetect', status)
                 break
-            db_wf_file_path = Data().read_bd('silence_duration', file_path)
+            if self.selected_db == 'SQLITE':
+                db_wf_file_path = DataLite().read_bd(tbl_name, 'silence_duration', file_path)
+                duration = DataLite().read_bd(tbl_name, 'F_duration', file_path)
+            else:
+                db_wf_file_path = DataPos().read_bd(tbl_name, 'silence_duration', file_path)
+                duration = DataPos().read_bd(tbl_name, 'F_duration', file_path)
             if db_wf_file_path == 'нет данных':
-                # self.alert.show()
                 try:
                     print(now())
                     print('Анализ пропусков звука в', file_path)
-                    SilenceDetect(file_path, slnc_dur, slnc_noize, slnc_tc_in, slnc_tc_out)
+                    if self.ui_set.silenceCheckBox.isChecked():
+                        slnc_tc_fin = float(duration) - convert_tf_to_sec(slnc_tc_out)
+                        SilenceDetect(self.selected_db, tbl_name, file_path, slnc_dur, slnc_noize, slnc_tc_fin)
+                    else:
+                        SilenceDetect(self.selected_db, tbl_name, file_path, slnc_dur, slnc_noize, slnc_tc_in, slnc_tc_out)
                     print(now())
                     print('Анализ завершён')
                     status = 'Выполнено'
@@ -2099,19 +3436,19 @@ class VideoInfo(QMainWindow):
                     status = 'Ошибка'
                     pass
                 # self.error_highlight()
-                # self.alert.close()
             else:
                 print(now())
                 print('Сканирование пропусков звука в', file_path, 'уже проводилось')
                 status = 'Сканирование проводилось'
             self.create_table_bg_full(file_path, i, 'SilenceDetect', status)
             progress = int((i + 1) / total_files * 100)
-            progress_dialog_r128.setValue(progress)
+            progress_dialog.setValue(progress)
             QApplication.processEvents()
             complited = True
         return complited
 
-    def backgound_fullscan_freezedetect(self, file_list, progress_dialog_frz):
+    def backgound_fullscan_freezedetect(self, file_list, progress_dialog):
+        tbl_name = self.read_tbl_name()
         complited = False
         frz_dur = self.ui_set.frz_dur_txt.text()
         frz_noize = self.ui_set.frz_noize_txt.text()
@@ -2123,23 +3460,34 @@ class VideoInfo(QMainWindow):
         self.ui.tableWidget_01.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         total_files = len(file_list)
         progress = int(1 / total_files * 100)
-        progress_dialog_frz.setValue(progress)
+        progress_dialog.setValue(progress)
         QApplication.processEvents()
         for i, file_path in enumerate(file_list):
-            progress_dialog_frz.setLabelText(f'{i + 1}/{total_files}  FreezeDetect scan\n{file_path}')
-            if progress_dialog_frz.wasCanceled():
+            self.progress_dialog_label.setText(f'{i + 1}/{total_files}  FreezeDetect scan\n{file_path}')
+            progress_dialog.setLabel(self.progress_dialog_label)
+            QApplication.processEvents()
+            if progress_dialog.wasCanceled():
                 complited = False
                 status = 'Отменено'
                 for _ in range(i, total_files):
                     self.create_table_bg_full(file_path, i, 'FreezeDetect', status)
                 break
-            db_wf_file_path = Data().read_bd('freeze_duration', file_path)
+            if self.selected_db == 'SQLITE':
+                db_wf_file_path = DataLite().read_bd(tbl_name, 'freeze_duration', file_path)
+                duration = DataLite().read_bd(tbl_name, 'F_duration', file_path)
+            else:
+                db_wf_file_path = DataPos().read_bd(tbl_name, 'freeze_duration', file_path)
+                duration = DataPos().read_bd(tbl_name, 'F_duration', file_path)
             if db_wf_file_path == 'нет данных':
                 # self.alert.show()
                 try:
                     print(now())
                     print('Анализ стоп-кадров в', file_path)
-                    FreezeDetect(file_path, frz_dur, frz_noize, frz_tc_in, frz_tc_out)
+                    if self.ui_set.freezeCheckBox.isChecked():
+                        frz_tc_fin = float(duration) - convert_tf_to_sec(frz_tc_out)
+                        FreezeDetect(self.selected_db, tbl_name, file_path, frz_dur, frz_noize, frz_tc_fin)
+                    else:
+                        FreezeDetect(self.selected_db, tbl_name, file_path, frz_dur, frz_noize, frz_tc_in, frz_tc_out)
                     print(now())
                     print('Анализ завершён')
                     status = 'Выполнено'
@@ -2156,31 +3504,46 @@ class VideoInfo(QMainWindow):
                 status = 'Сканирование проводилось'
             self.create_table_bg_full(file_path, i, 'FreezeDetect', status)
             progress = int((i + 1) / total_files * 100)
-            progress_dialog_frz.setValue(progress)
+            progress_dialog.setValue(progress)
             QApplication.processEvents()
             complited = True
         return complited
 
-    def scan_loudnorm(self, tbl_file_list, progress_dialog_r128):
+
+    def scan_loudnorm(self, tbl_file_list, progress_dialog):
+        tbl_name = self.read_tbl_name()
         r128_i = self.ui_set.r128_i_txt.text()
         r128_lra = self.ui_set.r128_lra_txt.text()
         r128_tp = self.ui_set.r128_tp_txt.text()
         r128_thr = self.ui_set.r128_thr_txt.text()
         total_files = len(tbl_file_list)
-        progress = int(1 / total_files * 100)
-        progress_dialog_r128.setValue(progress)
+        if total_files == 1:
+            progress_dialog.setValue(0)
+            self.progress_dialog_label.setText(f'Loudness scan\n{tbl_file_list[0]}')
+            progress_dialog.setLabel(self.progress_dialog_label)
+            progress_dialog.show()
+        else:
+            progress = int(1 / total_files * 100)
+            progress_dialog.setValue(progress)
         QApplication.processEvents()
         for i, tbl_file_path in enumerate(tbl_file_list):
-            progress_dialog_r128.setLabelText(f'{i + 1}/{total_files}  Loudness scan\n{tbl_file_path}')
-            if progress_dialog_r128.wasCanceled():
+            if total_files != 1:
+                self.progress_dialog_label.setText(f'{i + 1}/{total_files}  Loudness scan\n{tbl_file_path}')
+                progress_dialog.setLabel(self.progress_dialog_label)
+            QApplication.processEvents()
+            if progress_dialog.wasCanceled():
                 break
-            db_wf_file_path = Data().read_bd('waveform_path', tbl_file_path)
+            if self.selected_db == 'SQLITE':
+                db_wf_file_path = DataLite().read_bd(tbl_name, 'waveform_path', tbl_file_path)
+            else:
+                db_wf_file_path = DataPos().read_bd(tbl_name, 'waveform_path', tbl_file_path)
             if db_wf_file_path == 'нет данных':
                 # self.alert.show()
                 try:
                     print(now())
                     print('Запуск анализа уровня громкости файла', tbl_file_path)
-                    R128(tbl_file_path, r128_i, r128_lra, r128_tp)
+                    R128(self.selected_db, tbl_name, tbl_file_path, r128_i, r128_lra, r128_tp)
+                    # self.threadpool.start(R128(tbl_file_path, r128_i, r128_lra, r128_tp))
                     print(now())
                     print('Анализ уровня громкости файла', tbl_file_path, 'завершён')
                 except Exception:
@@ -2194,8 +3557,42 @@ class VideoInfo(QMainWindow):
                 print(now())
                 print('Сканирование R128 файла', tbl_file_path, 'уже проводилось')
             progress = int((i + 1) / total_files * 100)
-            progress_dialog_r128.setValue(progress)
+            progress_dialog.setValue(progress)
             QApplication.processEvents()
+
+    def scan_single_loudnorm(self, file_path, progress_dialog):
+        tbl_name = self.read_tbl_name()
+        progress_dialog.setValue(0)
+        self.progress_dialog_label.setText(f'Loudness scan\n{file_path}')
+        progress_dialog.setLabel(self.progress_dialog_label)
+        progress_dialog.show()
+        QApplication.processEvents()
+        r128_i = self.ui_set.r128_i_txt.text()
+        r128_lra = self.ui_set.r128_lra_txt.text()
+        r128_tp = self.ui_set.r128_tp_txt.text()
+        r128_thr = self.ui_set.r128_thr_txt.text()
+        if self.selected_db == 'SQLITE':
+            db_wf_file_path = DataLite().read_bd(tbl_name, 'waveform_path', file_path)
+        else:
+            db_wf_file_path = DataPos().read_bd(tbl_name, 'waveform_path', file_path)
+        if db_wf_file_path == 'нет данных':
+            try:
+                print(now())
+                print('Запуск анализа уровня громкости файла', file_path)
+                R128(self.selected_db, tbl_name, file_path, r128_i, r128_lra, r128_tp)
+                print(now())
+                print('Анализ уровня громкости файла', file_path, 'завершён')
+            except Exception:
+                print(now())
+                print('Ошибка анализа уровня громкости')
+                pass
+            self.add_table_r128()
+        else:
+            print(now())
+            print('Сканирование R128 файла', file_path, 'уже проводилось')
+        QApplication.processEvents()
+        progress_dialog.setValue(100)
+        progress_dialog.close()
 
     def values_damage(self):
         v_slnc_dur = self.ui_set.slnc_dur_txt.text()
@@ -2208,103 +3605,130 @@ class VideoInfo(QMainWindow):
         v_frz_tc_in = self.ui_set.frz_tc_in.text()
         v_frz_tc_out = self.ui_set.frz_tc_out.text()
 
+    def black_detect_update_settings(self):
+        if self.ui_set.blackCheckBox.isChecked():
+            self.ui_set.blck_tc_in.setText('00:00:00')
+            self.ui_set.blck_tc_in.setEnabled(False)
+            self.ui_set.blck_tc_in.setStyleSheet('color:grey')
+            self.ui_set.blck_out_label.setText('Until out')
+        else:
+            self.ui_set.blck_tc_in.setEnabled(True)
+            self.ui_set.blck_tc_in.setStyleSheet('color:white')
+            self.ui_set.blck_out_label.setText('Out')
+
+    def silence_detect_update_settings(self):
+        if self.ui_set.silenceCheckBox.isChecked():
+            self.ui_set.slnc_tc_in.setText('00:00:00')
+            self.ui_set.slnc_tc_in.setEnabled(False)
+            self.ui_set.slnc_tc_in.setStyleSheet('color:grey')
+            self.ui_set.slnc_out_label.setText('Until out')
+        else:
+            self.ui_set.slnc_tc_in.setEnabled(True)
+            self.ui_set.slnc_tc_in.setStyleSheet('color:white')
+            self.ui_set.slnc_out_label.setText('Out')
+
+    def freeze_detect_update_settings(self):
+        if self.ui_set.freezeCheckBox.isChecked():
+            self.ui_set.frz_tc_in.setText('00:00:00')
+            self.ui_set.frz_tc_in.setEnabled(False)
+            self.ui_set.frz_tc_in.setStyleSheet('color:grey')
+            self.ui_set.frz_out_label.setText('Until out')
+        else:
+            self.ui_set.frz_tc_in.setEnabled(True)
+            self.ui_set.frz_tc_in.setStyleSheet('color:white')
+            self.ui_set.frz_out_label.setText('Out')
+
+    def prepare_black_detect_selected(self):
+        file_list = self.selected_file_list()
+        progress_dialog = self.progress_bar()
+        self.scan_black_detect(file_list, progress_dialog)
+        progress_dialog.close()
+
     def prepare_black_detect_single(self):
         row_position = self.ui.tableWidget_01.currentRow()
         file_path = self.ui.tableWidget_01.item(row_position, 0).text()
-        progress_dialog_blck = QProgressDialog("BlackDetect scan", "Cancel", 0, 100, self)
-        progress_dialog_blck.setWindowTitle("Processing...")
-        progress_dialog_blck.setWindowModality(Qt.WindowModal)
-        progress_dialog_blck.setMinimumDuration(0)
-        progress_dialog_blck.setMinimumSize(400, 150)
-        progress_dialog_blck.setStyleSheet("QPushButton {color: white; background-color:rgba(255,255,255,30);"
-                                           "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
-                                           "QPushButton:hover {background-color:rgba(255,255,255,50);}"
-                                           "QPushButton:pressed{background-color:rgba(255,255,255,70);}")
-
-        self.scan_black_detect((file_path,), progress_dialog_blck)
-        progress_dialog_blck.setValue(100)
+        progress_dialog = self.progress_bar()
+        self.scan_black_detect((file_path,), progress_dialog)
 
     def prepare_black_detect_multi(self):
         tbl_file_list = self.file_queue()
-        progress_dialog_blck = QProgressDialog("BlackDetect scan", "Cancel", 0, 100, self)
-        progress_dialog_blck.setWindowTitle("Processing...")
-        progress_dialog_blck.setWindowModality(Qt.WindowModal)
-        progress_dialog_blck.setMinimumDuration(0)
-        progress_dialog_blck.setMinimumSize(400, 150)
-        progress_dialog_blck.setStyleSheet("QPushButton {color: white; background-color:rgba(255,255,255,30);"
-                                           "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
-                                           "QPushButton:hover {background-color:rgba(255,255,255,50);}"
-                                           "QPushButton:pressed{background-color:rgba(255,255,255,70);}")
+        progress_dialog = self.progress_bar()
+        self.scan_black_detect(tuple(tbl_file_list), progress_dialog)
 
-        self.scan_black_detect(tuple(tbl_file_list), progress_dialog_blck)
-        progress_dialog_blck.setValue(100)
-
-    def scan_black_detect(self, tbl_file_list, progress_dialog_blck):
+    def scan_black_detect(self, tbl_file_list, progress_dialog):
+        tbl_name = self.read_tbl_name()
         total_files = len(tbl_file_list)
-        progress = int(1 / total_files * 100)
-        progress_dialog_blck.setValue(progress)
+        print(total_files)
+        if total_files == 1:
+            progress_dialog.setValue(0)
+            self.progress_dialog_label.setText(f'BlackDetect scan\n{tbl_file_list[0]}')
+            progress_dialog.setLabel(self.progress_dialog_label)
+            progress_dialog.show()
+        else:
+            progress = int(1 / total_files * 100)
+            progress_dialog.setValue(progress)
         QApplication.processEvents()
         blck_dur = self.ui_set.blck_dur_txt.text()
         blck_thr = self.ui_set.blck_thr_txt.text()
         blck_tc_in = self.ui_set.blck_tc_in.text()
         blck_tc_out = self.ui_set.blck_tc_out.text()
         for i, tbl_file_path in enumerate(tbl_file_list):
-            progress_dialog_blck.setLabelText(f'{i + 1}/{total_files}  BlackDetect scan\n{tbl_file_path}')
-            if progress_dialog_blck.wasCanceled():
+            if total_files != 1:
+                self.progress_dialog_label.setText(f'{i + 1}/{total_files}  BlackDetect scan\n{tbl_file_path}')
+                progress_dialog.setLabel(self.progress_dialog_label)
+            QApplication.processEvents()
+            if progress_dialog.wasCanceled():
                 break
-            db_wf_file_path = Data().read_bd('black_duration', tbl_file_path)
+            if self.selected_db == 'SQLITE':
+                db_wf_file_path = DataLite().read_bd(tbl_name, 'black_duration', tbl_file_path)
+                duration = DataLite().read_bd(tbl_name, 'F_duration', tbl_file_path)
+            else:
+                db_wf_file_path = DataPos().read_bd(tbl_name, 'black_duration', tbl_file_path)
+                duration = DataPos().read_bd(tbl_name, 'F_duration', tbl_file_path)
             if db_wf_file_path == 'нет данных':
-                # self.alert.show()
                 try:
                     print(now())
                     print('Анализ чёрного поля файла', tbl_file_path)
-                    BlackDetect(tbl_file_path, blck_dur, blck_thr, blck_tc_in, blck_tc_out)
+                    if self.ui_set.blackCheckBox.isChecked():
+                        blck_tc_fin = float(duration) - convert_tf_to_sec(blck_tc_out)
+                        BlackDetect(self.selected_db, tbl_name, tbl_file_path, blck_dur, blck_thr, blck_tc_fin)
+                    else:
+                        BlackDetect(self.selected_db, tbl_name, tbl_file_path, blck_dur, blck_thr, blck_tc_in, blck_tc_out)
                 except Exception:
                     print(now())
                     print('Ошибка анализа чёрного поля')
                     pass
                 self.add_table_black()
                 # self.error_highlight()
-                # self.alert.close()
             else:
                 print('Сканирование чёрного поля файла', tbl_file_path, 'уже проводилось')
 
             progress = int((i + 1) / total_files * 100)
-            progress_dialog_blck.setValue(progress)
+            progress_dialog.setValue(progress)
             QApplication.processEvents()
+
+
+    def prepare_silence_detect_selected(self):
+        file_list = self.selected_file_list()
+        progress_dialog = self.progress_bar()
+        self.scan_silence_detect(file_list, progress_dialog)
 
     def prepare_silence_detect_single(self):
         row_position = self.ui.tableWidget_01.currentRow()
         file_path = self.ui.tableWidget_01.item(row_position, 0).text()
-        progress_dialog_slnc = QProgressDialog("SilenceDetect scan", "Cancel", 0, 100, self)
-        progress_dialog_slnc.setWindowTitle("Processing...")
-        progress_dialog_slnc.setWindowModality(Qt.WindowModal)
-        progress_dialog_slnc.setMinimumDuration(0)
-        progress_dialog_slnc.setMinimumSize(400, 150)
-        progress_dialog_slnc.setStyleSheet("QPushButton {color: white; background-color:rgba(255,255,255,30);"
-                                           "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
-                                           "QPushButton:hover {background-color:rgba(255,255,255,50);}"
-                                           "QPushButton:pressed{background-color:rgba(255,255,255,70);}")
-
-        self.scan_silence_detect((file_path,), progress_dialog_slnc)
-        progress_dialog_slnc.setValue(100)
+        progress_dialog = self.progress_bar()
+        self.scan_silence_detect((file_path,), progress_dialog)
 
     def prepare_silence_detect_multi(self):
         tbl_file_list = self.file_queue()
-        progress_dialog_slnc = QProgressDialog("SilenceDetect scan", "Cancel", 0, 100, self)
-        progress_dialog_slnc.setWindowTitle("Processing...")
-        progress_dialog_slnc.setWindowModality(Qt.WindowModal)
-        progress_dialog_slnc.setMinimumDuration(0)
-        progress_dialog_slnc.setMinimumSize(400, 150)
-        progress_dialog_slnc.setStyleSheet("QPushButton {color: white; background-color:rgba(255,255,255,30);"
-                                           "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
-                                           "QPushButton:hover {background-color:rgba(255,255,255,50);}"
-                                           "QPushButton:pressed{background-color:rgba(255,255,255,70);}")
+        progress_dialog = self.progress_bar()
+        self.scan_silence_detect(tuple(tbl_file_list), progress_dialog)
 
-        self.scan_silence_detect(tuple(tbl_file_list), progress_dialog_slnc)
-        progress_dialog_slnc.setValue(100)
+    def update_ui(self):
+        QApplication.processEvents()
 
     def scan_silence_detect(self, tbl_file_list, progress_dialog_slnc):
+        tbl_name = self.read_tbl_name()
         slnc_dur = self.ui_set.slnc_dur_txt.text()
         slnc_noize = self.ui_set.slnc_noize_txt.text()
         slnc_tc_in = self.ui_set.slnc_tc_in.text()
@@ -2312,18 +3736,29 @@ class VideoInfo(QMainWindow):
         total_files = len(tbl_file_list)
         progress = int(1 / total_files * 100)
         progress_dialog_slnc.setValue(progress)
-        QApplication.processEvents()
+        self.update_ui()
         for i, tbl_file_path in enumerate(tbl_file_list):
-            progress_dialog_slnc.setLabelText(f'{i + 1}/{total_files}  SilenceDetect scan\n{tbl_file_path}')
+            self.progress_dialog_label.setText(f'{i + 1}/{total_files}  SilenceDetect scan\n{tbl_file_path}')
+            progress_dialog_slnc.setLabel(self.progress_dialog_label)
+            QApplication.processEvents()
             if progress_dialog_slnc.wasCanceled():
                 break
-            db_wf_file_path = Data().read_bd('silence_duration', tbl_file_path)
+            if self.selected_db == 'SQLITE':
+                db_wf_file_path = DataLite().read_bd(tbl_name, 'silence_duration', tbl_file_path)
+                duration = DataLite().read_bd(tbl_name, 'F_duration', tbl_file_path)
+            else:
+                db_wf_file_path = DataPos().read_bd(tbl_name, 'silence_duration', tbl_file_path)
+                duration = DataPos().read_bd(tbl_name, 'F_duration', tbl_file_path)
             if db_wf_file_path == 'нет данных':
                 # self.alert.show()
                 try:
                     print(now())
                     print('Анализ пропусков звука в', tbl_file_path)
-                    SilenceDetect(tbl_file_path, slnc_dur, slnc_noize, slnc_tc_in, slnc_tc_out)
+                    if self.ui_set.silenceCheckBox.isChecked():
+                        slnc_tc_fin = float(duration) - convert_tf_to_sec(slnc_tc_out)
+                        SilenceDetect(self.selected_db, tbl_name, tbl_file_path, slnc_dur, slnc_noize, slnc_tc_fin)
+                    else:
+                        SilenceDetect(self.selected_db, tbl_name, tbl_file_path, slnc_dur, slnc_noize, slnc_tc_in, slnc_tc_out)
                 except Exception:
                     print(now())
                     print('Ошибка анализа пропусков звука')
@@ -2338,6 +3773,21 @@ class VideoInfo(QMainWindow):
             progress_dialog_slnc.setValue(progress)
             QApplication.processEvents()
 
+    def prepare_freeze_detect_selected(self):
+        file_list = self.selected_file_list()
+        progress_dialog_frz = QProgressDialog("FreezeDetect scan", "Cancel", 0, 100, self)
+        progress_dialog_frz.setWindowTitle("Processing...")
+        progress_dialog_frz.setWindowModality(Qt.WindowModal)
+        progress_dialog_frz.setMinimumDuration(0)
+        progress_dialog_frz.setFixedSize(650, 150)
+        progress_dialog_frz.setStyleSheet("QPushButton {color: white; background-color:rgba(255,255,255,30);"
+                                          "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
+                                          "QPushButton:hover {background-color:rgba(255,255,255,50);}"
+                                          "QPushButton:pressed{background-color:rgba(255,255,255,70);}")
+
+        self.scan_freeze_detect(file_list, progress_dialog_frz)
+        progress_dialog_frz.setValue(100)
+
     def prepare_freeze_detect_single(self):
         row_position = self.ui.tableWidget_01.currentRow()
         file_path = self.ui.tableWidget_01.item(row_position, 0).text()
@@ -2345,7 +3795,7 @@ class VideoInfo(QMainWindow):
         progress_dialog_frz.setWindowTitle("Processing...")
         progress_dialog_frz.setWindowModality(Qt.WindowModal)
         progress_dialog_frz.setMinimumDuration(0)
-        progress_dialog_frz.setMinimumSize(400, 150)
+        progress_dialog_frz.setFixedSize(650, 150)
         progress_dialog_frz.setStyleSheet("QPushButton {color: white; background-color:rgba(255,255,255,30);"
                                           "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
                                           "QPushButton:hover {background-color:rgba(255,255,255,50);}"
@@ -2360,7 +3810,7 @@ class VideoInfo(QMainWindow):
         progress_dialog_frz.setWindowTitle("Processing...")
         progress_dialog_frz.setWindowModality(Qt.WindowModal)
         progress_dialog_frz.setMinimumDuration(0)
-        progress_dialog_frz.setMinimumSize(400, 150)
+        progress_dialog_frz.setFixedSize(650, 150)
         progress_dialog_frz.setStyleSheet("QPushButton {color: white; background-color:rgba(255,255,255,30);"
                                           "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
                                           "QPushButton:hover {background-color:rgba(255,255,255,50);}"
@@ -2370,6 +3820,7 @@ class VideoInfo(QMainWindow):
         progress_dialog_frz.setValue(100)
 
     def scan_freeze_detect(self, tbl_file_list, progress_dialog_frz):
+        tbl_name = self.read_tbl_name()
         frz_dur = self.ui_set.frz_dur_txt.text()
         frz_noize = self.ui_set.frz_noize_txt.text()
         frz_tc_in = self.ui_set.frz_tc_in.text()
@@ -2379,16 +3830,27 @@ class VideoInfo(QMainWindow):
         progress_dialog_frz.setValue(progress)
         QApplication.processEvents()
         for i, tbl_file_path in enumerate(tbl_file_list):
-            progress_dialog_frz.setLabelText(f'{i + 1}/{total_files}  FreezeDetect scan\n{tbl_file_path}')
+            self.progress_dialog_label.setText(f'{i + 1}/{total_files}  FreezeDetect scan\n{tbl_file_path}')
+            progress_dialog_frz.setLabel(self.progress_dialog_label)
+            QApplication.processEvents()
             if progress_dialog_frz.wasCanceled():
                 break
-            db_wf_file_path = Data().read_bd('freeze_duration', tbl_file_path)
+            if self.selected_db == 'SQLITE':
+                db_wf_file_path = DataLite().read_bd(tbl_name, 'freeze_duration', tbl_file_path)
+                duration = DataLite().read_bd(tbl_name, 'F_duration', tbl_file_path)
+            else:
+                db_wf_file_path = DataPos().read_bd(tbl_name, 'freeze_duration', tbl_file_path)
+                duration = DataPos().read_bd(tbl_name, 'F_duration', tbl_file_path)
             if db_wf_file_path == 'нет данных':
                 # self.alert.show()
                 try:
                     print(now())
                     print('Анализ стоп-кадров в', tbl_file_path)
-                    FreezeDetect(tbl_file_path, frz_dur, frz_noize, frz_tc_in, frz_tc_out)
+                    if self.ui_set.freezeCheckBox.isChecked():
+                        frz_tc_fin = float(duration) - convert_tf_to_sec(frz_tc_out)
+                        FreezeDetect(self.selected_db, tbl_name, tbl_file_path, frz_dur, frz_noize, frz_tc_fin)
+                    else:
+                        FreezeDetect(self.selected_db, tbl_name, tbl_file_path, frz_dur, frz_noize, frz_tc_in, frz_tc_out)
                 except Exception:
                     print(now())
                     print('Ошибка анализа стоп-кадров')
@@ -2403,6 +3865,60 @@ class VideoInfo(QMainWindow):
             progress_dialog_frz.setValue(progress)
             QApplication.processEvents()
 
+    def prepare_full_detect_selected(self):
+        file_list = self.selected_file_list()
+        progress_dialog_r128 = QProgressDialog("Loudness scan", "Cancel", 0, 100, self)
+        progress_dialog_r128.setWindowTitle("Processing...")
+        progress_dialog_r128.setWindowModality(Qt.WindowModal)
+        progress_dialog_r128.setMinimumDuration(0)
+        progress_dialog_r128.setFixedSize(650, 150)
+        progress_dialog_r128.setStyleSheet("QPushButton {color: white; background-color:rgba(255,255,255,30);"
+                                           "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
+                                           "QPushButton:hover {background-color:rgba(255,255,255,50);}"
+                                           "QPushButton:pressed{background-color:rgba(255,255,255,70);}")
+
+        self.scan_loudnorm(file_list, progress_dialog_r128)
+        progress_dialog_r128.setValue(100)
+
+        progress_dialog_blck = QProgressDialog("BlackDetect scan", "Cancel", 0, 100, self)
+        progress_dialog_blck.setWindowTitle("Processing...")
+        progress_dialog_blck.setWindowModality(Qt.WindowModal)
+        progress_dialog_blck.setMinimumDuration(0)
+        progress_dialog_blck.setFixedSize(650, 150)
+        progress_dialog_blck.setStyleSheet("QPushButton {color: white; background-color:rgba(255,255,255,30);"
+                                           "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
+                                           "QPushButton:hover {background-color:rgba(255,255,255,50);}"
+                                           "QPushButton:pressed{background-color:rgba(255,255,255,70);}")
+
+        self.scan_black_detect(file_list, progress_dialog_blck)
+        progress_dialog_blck.setValue(100)
+
+        progress_dialog_slnc = QProgressDialog("SilenceDetect scan", "Cancel", 0, 100, self)
+        progress_dialog_slnc.setWindowTitle("Processing...")
+        progress_dialog_slnc.setWindowModality(Qt.WindowModal)
+        progress_dialog_slnc.setMinimumDuration(0)
+        progress_dialog_slnc.setFixedSize(650, 150)
+        progress_dialog_slnc.setStyleSheet("QPushButton {color: white; background-color:rgba(255,255,255,30);"
+                                           "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
+                                           "QPushButton:hover {background-color:rgba(255,255,255,50);}"
+                                           "QPushButton:pressed{background-color:rgba(255,255,255,70);}")
+
+        self.scan_silence_detect(file_list, progress_dialog_slnc)
+        progress_dialog_slnc.setValue(100)
+
+        progress_dialog_frz = QProgressDialog("FreezeDetect scan", "Cancel", 0, 100, self)
+        progress_dialog_frz.setWindowTitle("Processing...")
+        progress_dialog_frz.setWindowModality(Qt.WindowModal)
+        progress_dialog_frz.setMinimumDuration(0)
+        progress_dialog_frz.setFixedSize(650, 150)
+        progress_dialog_frz.setStyleSheet("QPushButton {color: white; background-color:rgba(255,255,255,30);"
+                                          "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
+                                          "QPushButton:hover {background-color:rgba(255,255,255,50);}"
+                                          "QPushButton:pressed{background-color:rgba(255,255,255,70);}")
+
+        self.scan_freeze_detect(file_list, progress_dialog_frz)
+        progress_dialog_frz.setValue(100)
+
     def prepare_full_detect_single(self):
         row_position = self.ui.tableWidget_01.currentRow()
         file_path = self.ui.tableWidget_01.item(row_position, 0).text()
@@ -2410,7 +3926,7 @@ class VideoInfo(QMainWindow):
         progress_dialog_r128.setWindowTitle("Processing...")
         progress_dialog_r128.setWindowModality(Qt.WindowModal)
         progress_dialog_r128.setMinimumDuration(0)
-        progress_dialog_r128.setMinimumSize(400, 150)
+        progress_dialog_r128.setFixedSize(650, 150)
         progress_dialog_r128.setStyleSheet("QPushButton {color: white; background-color:rgba(255,255,255,30);"
                                            "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
                                            "QPushButton:hover {background-color:rgba(255,255,255,50);}"
@@ -2423,7 +3939,7 @@ class VideoInfo(QMainWindow):
         progress_dialog_blck.setWindowTitle("Processing...")
         progress_dialog_blck.setWindowModality(Qt.WindowModal)
         progress_dialog_blck.setMinimumDuration(0)
-        progress_dialog_blck.setMinimumSize(400, 150)
+        progress_dialog_blck.setFixedSize(650, 150)
         progress_dialog_blck.setStyleSheet("QPushButton {color: white; background-color:rgba(255,255,255,30);"
                                            "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
                                            "QPushButton:hover {background-color:rgba(255,255,255,50);}"
@@ -2436,7 +3952,7 @@ class VideoInfo(QMainWindow):
         progress_dialog_slnc.setWindowTitle("Processing...")
         progress_dialog_slnc.setWindowModality(Qt.WindowModal)
         progress_dialog_slnc.setMinimumDuration(0)
-        progress_dialog_slnc.setMinimumSize(400, 150)
+        progress_dialog_slnc.setFixedSize(650, 150)
         progress_dialog_slnc.setStyleSheet("QPushButton {color: white; background-color:rgba(255,255,255,30);"
                                            "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
                                            "QPushButton:hover {background-color:rgba(255,255,255,50);}"
@@ -2449,7 +3965,7 @@ class VideoInfo(QMainWindow):
         progress_dialog_frz.setWindowTitle("Processing...")
         progress_dialog_frz.setWindowModality(Qt.WindowModal)
         progress_dialog_frz.setMinimumDuration(0)
-        progress_dialog_frz.setMinimumSize(400, 150)
+        progress_dialog_frz.setFixedSize(650, 150)
         progress_dialog_frz.setStyleSheet("QPushButton {color: white; background-color:rgba(255,255,255,30);"
                                           "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
                                           "QPushButton:hover {background-color:rgba(255,255,255,50);}"
@@ -2464,7 +3980,7 @@ class VideoInfo(QMainWindow):
         progress_dialog_r128.setWindowTitle("Processing...")
         progress_dialog_r128.setWindowModality(Qt.WindowModal)
         progress_dialog_r128.setMinimumDuration(0)
-        progress_dialog_r128.setMinimumSize(400, 150)
+        progress_dialog_r128.setFixedSize(650, 150)
         progress_dialog_r128.setStyleSheet("QPushButton {color: white; background-color:rgba(255,255,255,30);"
                                            "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
                                            "QPushButton:hover {background-color:rgba(255,255,255,50);}"
@@ -2477,7 +3993,7 @@ class VideoInfo(QMainWindow):
         progress_dialog_blck.setWindowTitle("Processing...")
         progress_dialog_blck.setWindowModality(Qt.WindowModal)
         progress_dialog_blck.setMinimumDuration(0)
-        progress_dialog_blck.setMinimumSize(400, 150)
+        progress_dialog_blck.setFixedSize(650, 150)
         progress_dialog_blck.setStyleSheet("QPushButton {color: white; background-color:rgba(255,255,255,30);"
                                            "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
                                            "QPushButton:hover {background-color:rgba(255,255,255,50);}"
@@ -2490,7 +4006,7 @@ class VideoInfo(QMainWindow):
         progress_dialog_slnc.setWindowTitle("Processing...")
         progress_dialog_slnc.setWindowModality(Qt.WindowModal)
         progress_dialog_slnc.setMinimumDuration(0)
-        progress_dialog_slnc.setMinimumSize(400, 150)
+        progress_dialog_slnc.setFixedSize(650, 150)
         progress_dialog_slnc.setStyleSheet("QPushButton {color: white; background-color:rgba(255,255,255,30);"
                                            "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
                                            "QPushButton:hover {background-color:rgba(255,255,255,50);}"
@@ -2503,7 +4019,7 @@ class VideoInfo(QMainWindow):
         progress_dialog_frz.setWindowTitle("Processing...")
         progress_dialog_frz.setWindowModality(Qt.WindowModal)
         progress_dialog_frz.setMinimumDuration(0)
-        progress_dialog_frz.setMinimumSize(400, 150)
+        progress_dialog_frz.setFixedSize(650, 150)
         progress_dialog_frz.setStyleSheet("QPushButton {color: white; background-color:rgba(255,255,255,30);"
                                           "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
                                           "QPushButton:hover {background-color:rgba(255,255,255,50);}"
@@ -2527,25 +4043,37 @@ class VideoInfo(QMainWindow):
                 header = self.ui.tableWidget_01.horizontalHeaderItem(col).text()
 
                 if self.header_rename('input_i') in header:
-                    db_data = Data().read_bd('input_i', file_path)
+                    if self.selected_db == 'SQLITE':
+                        db_data = DataLite().read_bd(self.read_tbl_name(), 'input_i', file_path)
+                    else:
+                        db_data = DataPos().read_bd(self.read_tbl_name(), 'input_i', file_path)
                     item = QTableWidgetItem()
                     item.setData(Qt.EditRole, db_data)
                     self.ui.tableWidget_01.setItem(row, col, item)
                     # self.ui.tableWidget_01.showColumn(col)
                 if self.header_rename('input_tp') in header:
-                    db_data = Data().read_bd('input_tp', file_path)
+                    if self.selected_db == 'SQLITE':
+                        db_data = DataLite().read_bd(self.read_tbl_name(), 'input_tp', file_path)
+                    else:
+                        db_data = DataPos().read_bd(self.read_tbl_name(), 'input_tp', file_path)
                     item = QTableWidgetItem()
                     item.setData(Qt.EditRole, db_data)
                     self.ui.tableWidget_01.setItem(row, col, item)
                     # self.ui.tableWidget_01.showColumn(col)
                 if self.header_rename('input_lra') in header:
-                    db_data = Data().read_bd('input_lra', file_path)
+                    if self.selected_db == 'SQLITE':
+                        db_data = DataLite().read_bd(self.read_tbl_name(), 'input_lra', file_path)
+                    else:
+                        db_data = DataPos().read_bd(self.read_tbl_name(), 'input_lra', file_path)
                     item = QTableWidgetItem()
                     item.setData(Qt.EditRole, db_data)
                     self.ui.tableWidget_01.setItem(row, col, item)
                     # self.ui.tableWidget_01.showColumn(col)
                 if self.header_rename('input_thresh') in header:
-                    db_data = Data().read_bd('input_thresh', file_path)
+                    if self.selected_db == 'SQLITE':
+                        db_data = DataLite().read_bd(self.read_tbl_name(), 'input_thresh', file_path)
+                    else:
+                        db_data = DataPos().read_bd(self.read_tbl_name(), 'input_thresh', file_path)
                     item = QTableWidgetItem()
                     item.setData(Qt.EditRole, db_data)
                     self.ui.tableWidget_01.setItem(row, col, item)
@@ -2570,7 +4098,10 @@ class VideoInfo(QMainWindow):
             file_path = self.ui.tableWidget_01.item(row, 0).text()
             for col in range(columns):
                 header = self.ui.tableWidget_01.horizontalHeaderItem(col).text()
-                db_data = Data().read_bd('black_start', file_path)
+                if self.selected_db == 'SQLITE':
+                    db_data = DataLite().read_bd(self.read_tbl_name(), 'black_start', file_path)
+                else:
+                    db_data = DataPos().read_bd(self.read_tbl_name(), 'black_start', file_path)
                 if self.header_rename('black_start') in header:
                     if db_data != 'нет данных' and db_data != 'не найдено':
                         item = QTableWidgetItem()
@@ -2579,6 +4110,10 @@ class VideoInfo(QMainWindow):
                     if db_data == 'не найдено':
                         item = QTableWidgetItem()
                         item.setData(Qt.EditRole, 'не найдено')
+                        self.ui.tableWidget_01.setItem(row, col, item)
+                    if db_data == 'нет данных':
+                        item = QTableWidgetItem()
+                        item.setData(Qt.EditRole, 'нет данных')
                         self.ui.tableWidget_01.setItem(row, col, item)
                     # self.ui.tableWidget_01.showColumn(col)
                 if row % 2 != 0:
@@ -2600,7 +4135,10 @@ class VideoInfo(QMainWindow):
             file_path = self.ui.tableWidget_01.item(row, 0).text()
             for col in range(columns):
                 header = self.ui.tableWidget_01.horizontalHeaderItem(col).text()
-                db_data = Data().read_bd('silence_start', file_path)
+                if self.selected_db == 'SQLITE':
+                    db_data = DataLite().read_bd(self.read_tbl_name(), 'silence_start', file_path)
+                else:
+                    db_data = DataPos().read_bd(self.read_tbl_name(), 'silence_start', file_path)
                 if self.header_rename('silence_start') in header:
                     if db_data != 'нет данных' and db_data != 'не найдено':
                         item = QTableWidgetItem()
@@ -2609,6 +4147,10 @@ class VideoInfo(QMainWindow):
                     if db_data == 'не найдено':
                         item = QTableWidgetItem()
                         item.setData(Qt.EditRole, 'не найдено')
+                        self.ui.tableWidget_01.setItem(row, col, item)
+                    if db_data == 'нет данных':
+                        item = QTableWidgetItem()
+                        item.setData(Qt.EditRole, 'нет данных')
                         self.ui.tableWidget_01.setItem(row, col, item)
                     # self.ui.tableWidget_01.showColumn(col)
                 if row % 2 != 0:
@@ -2630,7 +4172,10 @@ class VideoInfo(QMainWindow):
             file_path = self.ui.tableWidget_01.item(row, 0).text()
             for col in range(columns):
                 header = self.ui.tableWidget_01.horizontalHeaderItem(col).text()
-                db_data = Data().read_bd('freeze_start', file_path)
+                if self.selected_db == 'SQLITE':
+                    db_data = DataLite().read_bd(self.read_tbl_name(), 'freeze_start', file_path)
+                else:
+                    db_data = DataPos().read_bd(self.read_tbl_name(), 'freeze_start', file_path)
                 if self.header_rename('freeze_start') in header:
                     if db_data != 'нет данных' and db_data != 'не найдено':
                         item = QTableWidgetItem()
@@ -2639,6 +4184,10 @@ class VideoInfo(QMainWindow):
                     if db_data == 'не найдено':
                         item = QTableWidgetItem()
                         item.setData(Qt.EditRole, 'не найдено')
+                        self.ui.tableWidget_01.setItem(row, col, item)
+                    if db_data == 'нет данных':
+                        item = QTableWidgetItem()
+                        item.setData(Qt.EditRole, 'нет данных')
                         self.ui.tableWidget_01.setItem(row, col, item)
                     # self.ui.tableWidget_01.showColumn(col)
                 if row % 2 != 0:
@@ -2674,79 +4223,108 @@ class VideoInfo(QMainWindow):
 
     def show_waves(self, file_path):
         self.ui.frame_wave.setStyleSheet(u"QFrame#frame_wave{\nborder: 1px solid rgb(63,64,66);\n}")
-        wave_file = Data().read_bd('waveform_path', file_path)
-        if wave_file != 'нет данных':
+        tbl_name = self.read_tbl_name()
+        if self.selected_db == 'SQLITE':
+            all_headers = DataLite().read_all_headers(tbl_name)
+            all_data = DataLite().read_all_data_for_file(tbl_name, file_path)
+        else:
+            all_headers = DataPos().read_all_headers(tbl_name)
+            all_data = DataPos().read_all_data_for_file(tbl_name, file_path)
+        all_dict = dict(zip(all_headers, all_data))
+        wave_path = all_dict['waveform_path']
+        if self.selected_db == 'SQLITE':
+            wave_directory = os.path.join(self.parent_directory, 'waveforms')
+        else:
+            wave_directory = os.path.join(r'\\st33\Transcode\VideoINFO\waveforms', tbl_name)
+        wave_file = os.path.join(wave_directory, os.path.basename(wave_path))
+
+        if wave_file != 'нет данных' and os.path.exists(wave_file):
             self.ui.wave_view.setPixmap(QPixmap(wave_file))
+            input_i = all_dict['input_i']
+            input_tp = all_dict['input_tp']
+            input_lra = all_dict['input_lra']
+            input_thresh = all_dict['input_thresh']
 
-            input_i = Data().read_bd('input_i', file_path)
-            input_tp = Data().read_bd('input_tp', file_path)
-            input_lra = Data().read_bd('input_lra', file_path)
-            input_thresh = Data().read_bd('input_thresh', file_path)
             text_info = f'  I = {input_i}  |  LRA = {input_lra}  |  TP = {input_tp}  |  THRESHOLD = {input_thresh}  '
-
             self.ui.r128_loudness.setText(text_info)
         else:
             self.ui.wave_view.setPixmap(QPixmap(u":/imgs/img/WaveForm_04.png"))
             # self.ui.r128_loudness.hide()
-            self.ui.r128_loudness.setText('')
+            self.ui.r128_loudness.setText('LOUDNESS METER')
 
     def show_video_info_player(self, file_path):
+        tbl_name = self.read_tbl_name()
         self.vinfo_player.show()
         # print('test2')
-        black_start = Data().read_bd('black_start', file_path)
-        silence_start = Data().read_bd('silence_start', file_path)
-        freeze_start = Data().read_bd('freeze_start', file_path)
+        if self.selected_db == 'SQLITE':
+            black_start = DataLite().read_bd(tbl_name, 'black_start', file_path)
+            silence_start = DataLite().read_bd(tbl_name, 'silence_start', file_path)
+            freeze_start = DataLite().read_bd(tbl_name, 'freeze_start', file_path)
+        else:
+            black_start = DataPos().read_bd(tbl_name, 'black_start', file_path)
+            silence_start = DataPos().read_bd(tbl_name, 'silence_start', file_path)
+            freeze_start = DataPos().read_bd(tbl_name, 'freeze_start', file_path)
         if black_start != None and black_start != 'нет данных' and black_start != 'не найдено':
             self.create_blck_table(file_path)
         elif black_start == 'не найдено':
-            self.dialog.blck_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+            self.dialog.blck_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
             self.dialog.blck_table.setRowCount(0)
             self.dialog.blck_table.insertRow(0)
-            self.dialog.blck_table.setItem(0, 0, QtWidgets.QTableWidgetItem('не найдено'))
+            self.dialog.blck_table.setItem(0, 1, QtWidgets.QTableWidgetItem('не найдено'))
         else:
-            self.dialog.blck_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+            self.dialog.blck_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
             self.dialog.blck_table.setRowCount(0)
             self.dialog.blck_table.insertRow(0)
-            self.dialog.blck_table.setItem(0, 0, QtWidgets.QTableWidgetItem('нет данных'))
+            self.dialog.blck_table.setItem(0, 1, QtWidgets.QTableWidgetItem('нет данных'))
 
         if silence_start != None and silence_start != 'нет данных' and silence_start != 'не найдено':
             self.create_slnc_table(file_path)
         elif silence_start == 'не найдено':
-            self.dialog.slnc_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+            self.dialog.slnc_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
             self.dialog.slnc_table.setRowCount(0)
             self.dialog.slnc_table.insertRow(0)
-            self.dialog.slnc_table.setItem(0, 0, QtWidgets.QTableWidgetItem('не найдено'))
+            self.dialog.slnc_table.setItem(0, 1, QtWidgets.QTableWidgetItem('не найдено'))
         else:
-            self.dialog.slnc_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+            self.dialog.slnc_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
             self.dialog.slnc_table.setRowCount(0)
             self.dialog.slnc_table.insertRow(0)
-            self.dialog.slnc_table.setItem(0, 0, QtWidgets.QTableWidgetItem('нет данных'))
+            self.dialog.slnc_table.setItem(0, 1, QtWidgets.QTableWidgetItem('нет данных'))
         if freeze_start != None and freeze_start != 'нет данных' and freeze_start != 'не найдено':
             self.create_freeze_table(file_path)
         elif freeze_start == 'не найдено':
-            self.dialog.frz_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+            self.dialog.frz_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
             self.dialog.frz_table.setRowCount(0)
             self.dialog.frz_table.insertRow(0)
-            self.dialog.frz_table.setItem(0, 0, QtWidgets.QTableWidgetItem('не найдено'))
+            self.dialog.frz_table.setItem(0, 1, QtWidgets.QTableWidgetItem('не найдено'))
         else:
-            self.dialog.frz_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+            self.dialog.frz_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
             self.dialog.frz_table.setRowCount(0)
             self.dialog.frz_table.insertRow(0)
-            self.dialog.frz_table.setItem(0, 0, QtWidgets.QTableWidgetItem('нет данных'))
+            self.dialog.frz_table.setItem(0, 1, QtWidgets.QTableWidgetItem('нет данных'))
 
     def create_blck_table(self, file_path):
+        tbl_name = self.read_tbl_name()
         self.dialog.blck_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         self.dialog.blck_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
         self.dialog.blck_table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeToContents)
-        black_start = Data().read_bd('black_start', file_path)
-        black_start_list = ast.literal_eval(black_start)
-        black_end = Data().read_bd('black_end', file_path)
-        black_end_list = ast.literal_eval(black_end)
-        black_duration = Data().read_bd('black_duration', file_path)
-        black_duration_list = ast.literal_eval(black_duration)
-        self.dialog.blck_table.setRowCount(0)
-        fps = Data().read_bd('V01_r_frame_rate', file_path)
+        if self.selected_db == 'SQLITE':
+            black_start = DataLite().read_bd(tbl_name, 'black_start', file_path)
+            black_start_list = ast.literal_eval(black_start)
+            black_end = DataLite().read_bd(tbl_name, 'black_end', file_path)
+            black_end_list = ast.literal_eval(black_end)
+            black_duration = DataLite().read_bd(tbl_name, 'black_duration', file_path)
+            black_duration_list = ast.literal_eval(black_duration)
+            fps = DataLite().read_bd(tbl_name, 'V01_r_frame_rate', file_path)
+        else:
+            black_start = DataPos().read_bd(tbl_name, 'black_start', file_path)
+            black_start_list = ast.literal_eval(black_start)
+            black_end = DataPos().read_bd(tbl_name, 'black_end', file_path)
+            black_end_list = ast.literal_eval(black_end)
+            black_duration = DataPos().read_bd(tbl_name, 'black_duration', file_path)
+            black_duration_list = ast.literal_eval(black_duration)
+            fps = DataPos().read_bd(tbl_name, 'V01_r_frame_rate', file_path)
         fps = convert_fps(fps).split(' ')[0]
+        self.dialog.blck_table.setRowCount(0)
         for row in range(len(black_start_list)):
             self.dialog.blck_table.insertRow(row)
             black_start_item_tc = convert_duration_sec(float(black_start_list[row]), float(fps))
@@ -2769,18 +4347,28 @@ class VideoInfo(QMainWindow):
             self.dialog.blck_table.setItem(row, 6, QtWidgets.QTableWidgetItem(black_duration_item_tc[-8:]))
 
     def create_slnc_table(self, file_path):
+        tbl_name = self.read_tbl_name()
         self.dialog.slnc_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         self.dialog.slnc_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
         self.dialog.slnc_table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeToContents)
-        silence_start = Data().read_bd('silence_start', file_path)
-        silence_start_list = ast.literal_eval(silence_start)
-        silence_end = Data().read_bd('silence_end', file_path)
-        silence_end_list = ast.literal_eval(silence_end)
-        silence_duration = Data().read_bd('silence_duration', file_path)
-        silence_duration_list = ast.literal_eval(silence_duration)
-        self.dialog.slnc_table.setRowCount(0)
-        fps = Data().read_bd('V01_r_frame_rate', file_path)
+        if self.selected_db == 'SQLITE':
+            silence_start = DataLite().read_bd(tbl_name, 'silence_start', file_path)
+            silence_start_list = ast.literal_eval(silence_start)
+            silence_end = DataLite().read_bd(tbl_name, 'silence_end', file_path)
+            silence_end_list = ast.literal_eval(silence_end)
+            silence_duration = DataLite().read_bd(tbl_name, 'silence_duration', file_path)
+            silence_duration_list = ast.literal_eval(silence_duration)
+            fps = DataLite().read_bd(tbl_name, 'v01_r_frame_rate', file_path)
+        else:
+            silence_start = DataPos().read_bd(tbl_name, 'silence_start', file_path)
+            silence_start_list = ast.literal_eval(silence_start)
+            silence_end = DataPos().read_bd(tbl_name, 'silence_end', file_path)
+            silence_end_list = ast.literal_eval(silence_end)
+            silence_duration = DataPos().read_bd(tbl_name, 'silence_duration', file_path)
+            silence_duration_list = ast.literal_eval(silence_duration)
+            fps = DataPos().read_bd(tbl_name, 'v01_r_frame_rate', file_path)
         fps = convert_fps(fps).split(' ')[0]
+        self.dialog.slnc_table.setRowCount(0)
         # self.dialog.slnc_table.clearContents()
         for row in range(len(silence_start_list)):
             self.dialog.slnc_table.insertRow(row)
@@ -2803,18 +4391,28 @@ class VideoInfo(QMainWindow):
             self.dialog.slnc_table.setItem(row, 6, QtWidgets.QTableWidgetItem(silence_duration_item_tc[-8:]))
 
     def create_freeze_table(self, file_path):
+        tbl_name = self.read_tbl_name()
         self.dialog.frz_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         self.dialog.frz_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
         self.dialog.frz_table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeToContents)
-        freeze_start = Data().read_bd('freeze_start', file_path)
-        freeze_start_list = ast.literal_eval(freeze_start)
-        freeze_end = Data().read_bd('freeze_end', file_path)
-        freeze_end_list = ast.literal_eval(freeze_end)
-        freeze_duration = Data().read_bd('freeze_duration', file_path)
-        freeze_duration_list = ast.literal_eval(freeze_duration)
-        self.dialog.frz_table.setRowCount(0)
-        fps = Data().read_bd('V01_r_frame_rate', file_path)
+        if self.selected_db == 'SQLITE':
+            freeze_start = DataLite().read_bd(tbl_name, 'freeze_start', file_path)
+            freeze_start_list = ast.literal_eval(freeze_start)
+            freeze_end = DataLite().read_bd(tbl_name, 'freeze_end', file_path)
+            freeze_end_list = ast.literal_eval(freeze_end)
+            freeze_duration = DataLite().read_bd(tbl_name, 'freeze_duration', file_path)
+            freeze_duration_list = ast.literal_eval(freeze_duration)
+            fps = DataLite().read_bd(tbl_name, 'v01_r_frame_rate', file_path)
+        else:
+            freeze_start = DataPos().read_bd(tbl_name, 'freeze_start', file_path)
+            freeze_start_list = ast.literal_eval(freeze_start)
+            freeze_end = DataPos().read_bd(tbl_name, 'freeze_end', file_path)
+            freeze_end_list = ast.literal_eval(freeze_end)
+            freeze_duration = DataPos().read_bd(tbl_name, 'freeze_duration', file_path)
+            freeze_duration_list = ast.literal_eval(freeze_duration)
+            fps = DataPos().read_bd(tbl_name, 'v01_r_frame_rate', file_path)
         fps = convert_fps(fps).split(' ')[0]
+        self.dialog.frz_table.setRowCount(0)
         # self.dialog.slnc_table.clearContents()
         for row in range(len(freeze_start_list) - 1):
             self.dialog.frz_table.insertRow(row)
@@ -3005,7 +4603,10 @@ class VideoInfo(QMainWindow):
 
     def prev_frame(self):
         file_path = self.dialog.file_path.text()
-        fps = Data().read_bd('V01_r_frame_rate', file_path)
+        if self.selected_db == 'SQLITE':
+            fps = DataLite().read_bd(self.read_tbl_name(), 'v01_r_frame_rate', file_path)
+        else:
+            fps = DataPos().read_bd(self.read_tbl_name(), 'v01_r_frame_rate', file_path)
         fps = float(convert_fps(fps).split(' ')[0])
         pos = int(self.player.position())
         frame = int(1000 / fps)
@@ -3015,7 +4616,10 @@ class VideoInfo(QMainWindow):
 
     def next_frame(self):
         file_path = self.dialog.file_path.text()
-        fps = Data().read_bd('V01_r_frame_rate', file_path)
+        if self.selected_db == 'SQLITE':
+            fps = DataLite().read_bd(self.read_tbl_name(), 'v01_r_frame_rate', file_path)
+        else:
+            fps = DataPos().read_bd(self.read_tbl_name(), 'v01_r_frame_rate', file_path)
         fps = float(convert_fps(fps).split(' ')[0])
         pos = int(self.player.position())
         frame = int(1000 / fps)
@@ -3032,7 +4636,10 @@ class VideoInfo(QMainWindow):
         num_item.setData(Qt.EditRole, num)
 
         file_path = self.dialog.file_path.text()
-        fps = Data().read_bd('V01_r_frame_rate', file_path)
+        if self.selected_db == 'SQLITE':
+            fps = DataLite().read_bd(self.read_tbl_name(), 'v01_r_frame_rate', file_path)
+        else:
+            fps = DataPos().read_bd(self.read_tbl_name(), 'v01_r_frame_rate', file_path)
         fps = float(convert_fps(fps).split(' ')[0])
         pos = self.player.position()
 
@@ -3060,7 +4667,10 @@ class VideoInfo(QMainWindow):
     def read_marks(self):
         self.dialog.tableMarks.setRowCount(0)
         file_path = self.dialog.file_path.text()
-        db_marks = Data().read_bd('marks', file_path)
+        if self.selected_db == 'SQLITE':
+            db_marks = DataLite().read_bd(self.read_tbl_name(), 'marks', file_path)
+        else:
+            db_marks = DataPos().read_bd(self.read_tbl_name(), 'marks', file_path)
         if db_marks != 'нет данных':
             for data in ast.literal_eval(db_marks):
                 row_position = self.dialog.tableMarks.rowCount()
@@ -3096,7 +4706,10 @@ class VideoInfo(QMainWindow):
             data = (pos, pos_tc, mark),
             db_data += data
         file_path = self.dialog.file_path.text()
-        Data().add_data('marks', db_data, file_path)
+        if self.selected_db == 'SQLITE':
+            DataLite().add_data(self.read_tbl_name(), 'marks', db_data, file_path)
+        else:
+            DataPos().add_data(self.read_tbl_name(), 'marks', db_data, file_path)
 
     def del_mark(self):
         row = self.dialog.tableMarks.currentRow()
@@ -3120,7 +4733,10 @@ class VideoInfo(QMainWindow):
         self.positionSlider.setValue(position)
 
         file_path = self.dialog.file_path.text()
-        fps = Data().read_bd('V01_r_frame_rate', file_path)
+        if self.selected_db == 'SQLITE':
+            fps = DataLite().read_bd(self.read_tbl_name(), 'v01_r_frame_rate', file_path)
+        else:
+            fps = DataPos().read_bd(self.read_tbl_name(), 'v01_r_frame_rate', file_path)
         fps = float(convert_fps(fps).split(' ')[0])
 
         pos = convert_duration_sec(float(self.player.position() / 1000), float(fps))
@@ -3208,6 +4824,13 @@ class VideoInfo(QMainWindow):
     #         print('test')
 
     def closeEvent(self, event):
+        if self.selected_db == 'SQLITE':
+            # self.model.clear()
+            DataLite().close_db()
+            self.sqlite_db.close()
+            os.remove(self.sqlite_db_name)
+        else:
+            DataPos().close_db()
         print('Завершение')
         # Переопределить colseEvent
         # message = QMessageBox()
@@ -3225,6 +4848,75 @@ class VideoInfo(QMainWindow):
         #     event.accept()
         # else:
         #     event.ignore()
+
+class CustomDialog(QDialog):
+    def __init__(self, message_text):
+        super().__init__()
+
+        self.setWindowTitle("Attention!")
+
+        qbtn = QDialogButtonBox.Ok | QDialogButtonBox.Cancel
+
+        self.buttonBox = QDialogButtonBox(qbtn)
+        self.buttonBox.accepted.connect(self.accept)
+        self.buttonBox.rejected.connect(self.reject)
+
+        self.layout = QVBoxLayout()
+        message = QLabel(message_text)
+        message.setAlignment(Qt.AlignCenter)
+        self.layout.addWidget(message)
+        self.layout.addWidget(self.buttonBox)
+        self.setLayout(self.layout)
+
+
+class AttentionDialog(QDialog):
+    def __init__(self, message_text):
+        super().__init__()
+
+        self.setWindowTitle("Error!")
+        qbtn = QDialogButtonBox.StandardButton.Ok
+        self.buttonBox = QDialogButtonBox(qbtn)
+        self.buttonBox.accepted.connect(self.accept)
+
+        self.layout = QVBoxLayout()
+        message = QLabel(message_text)
+        message.setAlignment(Qt.AlignCenter)
+        self.layout.addWidget(message)
+        self.layout.addWidget(self.buttonBox)
+        self.setLayout(self.layout)
+
+
+class TableModel(QAbstractTableModel):
+    def __init__(self, headers, data):
+        super().__init__()
+        self._data = data
+        self._headers = headers
+
+    def headerData(self, section, orientation: Qt.Orientation, role: int = Qt.DisplayRole):
+        if role == Qt.DisplayRole and orientation == Qt.Horizontal:
+            return self._headers[section]
+        if role == Qt.DisplayRole and orientation == Qt.Vertical:
+            return section+1
+
+    def data(self, index, role: int = Qt.DisplayRole):
+        if role == Qt.DisplayRole:
+            # See below for the nested-list data structure.
+            # .row() indexes into the outer list,
+            # .column() indexes into the sub-list
+            return self._data[index.row()][index.column()]
+
+    def rowCount(self, index: QModelIndex = ...):
+        # The length of the outer list.
+        return len(self._data)
+
+    def columnCount(self, index: QModelIndex = ...):
+        # The following takes the first sub-list, and returns
+        # the length (only works if all rows are an equal length)
+        try:
+            col = len(self._data[0])
+        except Exception:
+            col = 1
+        return col
 
 
 if __name__ == "__main__":
