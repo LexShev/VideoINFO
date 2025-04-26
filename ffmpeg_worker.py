@@ -98,31 +98,6 @@ class FFmpegWorker(QRunnable):
         except Exception as e:
             raise Exception(f"Ошибка при получении данных нормализации: {e}")
 
-    # def parse_loudnorm_output(self, output_lines):
-    #     loudnorm_start = False
-    #     loudnorm_end = False
-    #     for index, line in enumerate(output_lines):
-    #         if line.startswith("[Parsed_loudnorm"):
-    #             loudnorm_start = index + 1
-    #             continue
-    #         if loudnorm_start and line.startswith("}"):
-    #             loudnorm_end = index + 1
-    #             break
-    #     if not (loudnorm_start and loudnorm_end):
-    #         raise Exception("Невозможно получить данные")
-    #     try:
-    #         loudnorm_stats = json.loads("\n".join(output_lines[loudnorm_start:loudnorm_end]))
-    #         export_dict = {'input_i': loudnorm_stats['input_i'],
-    #                        'input_tp': loudnorm_stats['input_tp'],
-    #                        'input_lra': loudnorm_stats['input_lra'],
-    #                        'input_thresh': loudnorm_stats['input_thresh']
-    #                        }
-    #         print(export_dict)
-    #         self.update_db(export_dict)
-    #         return export_dict
-    #     except Exception as e:
-    #         raise Exception(f"Невозможно получить данные. Ощибка JSON: {e.stderr.decode('utf-8')}")
-
     def update_db(self, export_dict):
         file_path_md5 = hashlib.md5(self.file_path.encode('utf-8')).hexdigest()
         self.collection.update_one({'_id': file_path_md5}, {"$set": {"ffmpeg_scanners": {'r128': export_dict}}})

@@ -2298,6 +2298,16 @@ class VideoInfo(QMainWindow):
             progress_dialog_tbl.setValue(progress)
             QApplication.processEvents()
 
+    def init_header(self, header_name):
+        head = QTableWidgetItem()
+        head.setData(Qt.EditRole, header_name)
+        return head
+
+    def init_item(self, db_data):
+        item = QTableWidgetItem()
+        item.setData(Qt.EditRole, db_data)
+        return item
+
     def create_table_01(self, file_path):
         tbl_name = self.read_tbl_name()
         self.ui.tableWidget_01.setColumnCount(22)
@@ -2361,15 +2371,12 @@ class VideoInfo(QMainWindow):
                 if db_data != 'нет данных' and db_data != 'не найдено':
                     db_data = 'найден'
 
-            header = self.header_rename(header)
-            head = QTableWidgetItem()
-            head.setData(Qt.EditRole, header)
-            self.ui.tableWidget_01.setHorizontalHeaderItem(col, head)
+            header_name = self.header_rename(header)
+
+            self.ui.tableWidget_01.setHorizontalHeaderItem(col, self.init_header(header_name))
             self.ui.tableWidget_01.horizontalHeader().setVisible(True)
 
-            item = QTableWidgetItem()
-            item.setData(Qt.EditRole, db_data)
-            self.ui.tableWidget_01.setItem(row_position, col, item)
+            self.ui.tableWidget_01.setItem(row_position, col, self.init_item(db_data))
 
             if row_position % 2 != 0:
                 self.ui.tableWidget_01.item(row_position, col).setBackground(self.grey_light)
@@ -3029,10 +3036,12 @@ class VideoInfo(QMainWindow):
         progress_dialog.setWindowModality(Qt.WindowModal)
         progress_dialog.setMinimumDuration(0)
         progress_dialog.setFixedSize(650, 150)
-        progress_dialog.setStyleSheet("QPushButton {color: white; background-color:rgba(255,255,255,30);"
-                                           "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
-                                           "QPushButton:hover {background-color:rgba(255,255,255,50);}"
-                                           "QPushButton:pressed{background-color:rgba(255,255,255,70);}")
+        progress_dialog.setStyleSheet(
+            "QPushButton {color: white; background-color:rgba(255,255,255,30);"
+            "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
+            "QPushButton:hover {background-color:rgba(255,255,255,50);}"
+            "QPushButton:pressed{background-color:rgba(255,255,255,70);}"
+        )
         return progress_dialog
 
     def prepare_loudnorm_selected(self):
@@ -3376,7 +3385,6 @@ class VideoInfo(QMainWindow):
                     print(now())
                     print('Ошибка анализа чёрного поля')
                     status = 'Ошибка'
-                    pass
             else:
                 print(now())
                 print('Сканирование чёрного поля файла', file_path, 'уже проводилось')
@@ -3434,7 +3442,6 @@ class VideoInfo(QMainWindow):
                     print(now())
                     print('Ошибка анализа пропусков звука')
                     status = 'Ошибка'
-                    pass
                 # self.error_highlight()
             else:
                 print(now())
@@ -3495,7 +3502,6 @@ class VideoInfo(QMainWindow):
                     print(now())
                     print('Ошибка анализа стоп-кадров')
                     status = 'Ошибка'
-                    pass
                 # self.error_highlight()
                 # self.alert.close()
             else:

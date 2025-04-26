@@ -175,7 +175,6 @@ class DataLite:
         # print('data:', data)
         return data
 
-
     def read_bd_multi(self, tbl_name, header):
         try:
             self.cursor.execute(f'SELECT {header} FROM {tbl_name}')
