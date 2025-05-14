@@ -1,12 +1,17 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="Encoding" defaultCharsetForPropertiesFiles="UTF-8">
-    <file url="file://$PROJECT_DIR$/MAIN.py" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/MAIN_obsolete.py" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/TESTs/TEST_01.py" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/TESTs/TEST_03.py" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/TESTs/TEST_QThread.py" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/TESTs/test.txt" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/config/settings.ini" charset="windows-1251" />
+    <file url="file://$PROJECT_DIR$/create_mongo_table.py" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/ffmpeg_mongo.py" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/ffmpeg_worker.py" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/ffprobe_single_scan.py" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/video_player.py" charset="UTF-8" />
     <file url="PROJECT" charset="windows-1251" />
   </component>
 </project>

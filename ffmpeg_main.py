@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 import shutil
 
-from PySide6.QtCore import QThread
 
 from sqlite_connection import DataLite
 from posql_connection import DataPos

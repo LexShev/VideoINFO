@@ -25,7 +25,9 @@ from PySide6.QtWidgets import QApplication, QMainWindow, QFileDialog, QHeaderVie
     QDialog, QLabel, QComboBox, QToolBar, QLineEdit, QPushButton, QMessageBox, QDialogButtonBox, QVBoxLayout, QMenu, \
     QListWidget, QWidget, QProgressBar
 
+from create_mongo_table import MongoTableModel
 from ffmpeg_worker import FFmpegWorker
+from ffprobe_single_scan import FFprobeMongo
 from ffprobe_worker import FFprobeWorker
 from mongo_connection import MongoDB
 from settings import Settings
@@ -141,7 +143,7 @@ class DoubleProgressDialog(QDialog):
 
         self.setWindowTitle("Processing...")
         self.setWindowModality(Qt.WindowModal)
-        self.setFixedSize(650, 250)
+        self.setFixedSize(650, 200)
         self.setStyleSheet(
             "QPushButton {color: white; background-color:rgba(255,255,255,30);"
             "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
@@ -304,9 +306,6 @@ class VideoInfo(QMainWindow):
         self.grey_light = QColor(65, 65, 70)
         self.grey_dark = QColor(40, 40, 45)
 
-        # SettingsWin
-
-
         # Config settings
         settings_directory = os.path.join(PARENT_DIRECTORY, 'config')
         os.makedirs(settings_directory, exist_ok=True)
@@ -333,7 +332,10 @@ class VideoInfo(QMainWindow):
         self.sqlite_model = QSqlTableModel(self)
         self.sqlite_model.setTable(self.tbl_name)
         self.sqlite_model.select()
-        self.ui.tableView_db.setModel(self.sqlite_model)
+
+        self.mongo_model = MongoTableModel()
+        self.mongo_model.load_from_mongo()
+        self.ui.tableView_db.setModel(self.mongo_model)
         self.ui.tableView_db.hide()
         self.ui.tableView_db.hideColumn(0)
         self.ui.tableView_db.setColumnWidth(1, 400)
@@ -1085,7 +1087,7 @@ class VideoInfo(QMainWindow):
             self.choose_base_btn.setStyleSheet(self.choose_btn_style_red)
         else:
             self.ui.move_to_dbButton.show()
-            self.ui.tableView_db.setModel(self.sqlite_proxy_model)
+            self.ui.tableView_db.setModel(self.mongo_model)
 
             self.sqlite_model.setTable(self.read_tbl_name())
             self.sqlite_model.select()
@@ -1669,7 +1671,7 @@ class VideoInfo(QMainWindow):
                    'Audio files (*.aac *.ac3 *.mp2 *.mp3 *.aif *.dts *.flac *.m4a *.ogg *.opus *.wav *.wma);;'
                    'All files (*.*)'
         )
-        return tuple(file_list[0])
+        return file_list[0]
 
     def prepare_background_loudnorm_scan(self):
         file_list = self.get_file_list()
@@ -1760,6 +1762,14 @@ class VideoInfo(QMainWindow):
                 print('Сбор данных завершён')
             complited = True
         return complited
+
+    def start_single_ffprobe(self, file_path):
+        if not self.mongo.find_file(file_path):
+            print(now())
+            print('Сбор данных для файла', file_path)
+            FFprobeMongo(file_path)
+            print(now())
+            print('Сбор данных завершён')
 
     def start_ffprobe_bg(self, file_list, progress_dialog):
         tbl_name = self.read_tbl_name()
@@ -2229,6 +2239,7 @@ class VideoInfo(QMainWindow):
 
         if len(subtitle) == 1:
             sub1 = subtitle[0].get('tags')
+            sub2 = {}
         elif len(subtitle) > 1:
             sub1 = subtitle[0].get('tags')
             sub2 = subtitle[1].get('tags')
