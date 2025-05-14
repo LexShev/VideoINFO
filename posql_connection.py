@@ -78,7 +78,6 @@ class DataPos:
             status = 'Connect'
         except Exception:
             status = 'Not2 connect'
-            pass
         return status
 
     # def check_connect(self):
@@ -111,7 +110,6 @@ class DataPos:
             except (Exception, Error) as error:
                 print('Ошибка добавления ключей в базу', error)
                 self.connection.rollback()
-                pass
         try:
             self.cursor.execute(f"INSERT INTO {tbl_name} ({headers}) VALUES {values}"
                                 f"ON CONFLICT (file_path) DO NOTHING")
@@ -142,7 +140,6 @@ class DataPos:
         except (Exception, Error) as error:
             print('Ошибка добавления ключей в базу', error)
             self.connection.rollback()
-            pass
 
         try:
             self.cursor.execute(f'UPDATE {tbl_name} SET {header} = %s WHERE file_path = %s', (data, file_path))
@@ -167,7 +164,6 @@ class DataPos:
             self.cursor.execute(f'UPDATE {tbl_name} SET {header} = %s WHERE file_path = %s', (str(data), file_path))
         except (Exception, Error) as error:
             print('Ошибка добавления данных', error)
-            pass
         self.connection.commit()
 
     def reset_data(self, tbl_name, file_path):
@@ -182,7 +178,6 @@ class DataPos:
                  'нет данных', 'нет данных', file_path))
         except Exception:
             print('Ошибка сброса данных')
-            pass
         self.connection.commit()
 
     def update_data(self, tbl_name, old_file_path, new_file_path):
@@ -207,7 +202,6 @@ class DataPos:
             self.cursor.execute(f'DELETE FROM {tbl_name} WHERE file_path = %s', (file_path,))
         except Exception:
             print('Ошибка удаления строки')
-            pass
 
         self.connection.commit()
         self.connection.close()
@@ -221,7 +215,6 @@ class DataPos:
             #     data = 'empty'
         except Exception:
             data = 'нет данных'
-            pass
         # print('data0:', data[0][0])
         # print('header:', header)
         print('data:', data)
@@ -236,7 +229,6 @@ class DataPos:
             #     data = 'empty'
         except Exception:
             all_data = 'нет данных'
-            pass
         return tuple(all_data)
 
     def read_all_data_for_file(self, tbl_name, file_path):
