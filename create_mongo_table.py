@@ -102,30 +102,6 @@ def prepare_data(file_info):
     silence = ffmpeg_scanners.get('silence')
     freeze = ffmpeg_scanners.get('freeze')
 
-    # return (
-    #     ('file_path', file_path),
-    #     ('Name', file_name),
-    #     ('Bit rate', convert_bytes(f_bit_rate, "bit/s")),
-    #     ('Codec', v_codec_name),
-    #     ('Width', v_width),
-    #     ('Height', v_height),
-    #     ('SAR', v_sample_aspect_ratio),
-    #     ('DAR', v_display_aspect_ratio),
-    #     ('Frame rate', convert_fps(v_frame_rate)),
-    #     ('Duration', convert_duration(f_duration, v_frame_rate)),
-    #     ('Audio map', a_audio_map),
-    #     ('Audio codec', a_codec_name),
-    #     ('Sample rate', convert_khz(a_sample_rate)),
-    #     ('Channels', a_channels),
-    #     ('Audio bit rate', convert_bytes(a_bit_rate, "bit/s")),
-    #     ('Integrated', input_i),
-    #     ('True Peak', input_tp),
-    #     ('LRA', input_lra),
-    #     ('Threshold', input_thresh),
-    #     ('Black Screen', black_screen),
-    #     ('Silence', silence),
-    #     ('Freeze', freeze),
-    # )
     return (file_path, file_name, convert_bytes(f_bit_rate, "bit/s"), v_codec_name, v_width, v_height,
             v_sample_aspect_ratio, v_display_aspect_ratio, convert_fps(v_frame_rate),
             convert_duration(f_duration, v_frame_rate), a_audio_map, a_codec_name, convert_khz(a_sample_rate),

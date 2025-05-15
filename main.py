@@ -1743,8 +1743,7 @@ class VideoInfo(QMainWindow):
         file_list = self.selected_file_list()
         complited = False
         for num, file_path in enumerate(file_list, 1):
-            total_n = len(file_list)
-            params = {'scan_type': 'ffprobe', 'num': num, 'total_n': total_n}
+            params = {'scan_type': 'ffprobe', 'num': num, 'total_n': len(file_list)}
             # if self.progress_dialog.wasCanceled():
             #     complited = False
             #     break
@@ -1868,7 +1867,7 @@ class VideoInfo(QMainWindow):
         file_list = self.get_file_list()
         total_files = len(file_list)
         for num, file_path in enumerate(file_list, 1):
-            params = {'scan_type': 'creating_table', 'num': num, 'total': len(file_list)}
+            params = {'scan_type': 'creating_table', 'num': num, 'total_n': len(file_list)}
             label = f'{num + 1}/{total_files}  Creating Table\n{file_path}'
             # self.progress_dialog.setLabel(QLabel(label))
             # if self.progress_dialog.wasCanceled():
@@ -1880,7 +1879,11 @@ class VideoInfo(QMainWindow):
             if row_count == 0:
                 print(now())
                 print('Построение:', file_path)
-                self.create_table_01(file_path)
+                worker = FFprobeWorker(file_path, params)
+                worker.signals.scan_result.connect(self.create_table_01)
+                self.current_workers.append(worker)
+                self.thread_pool.start(worker)
+                # self.create_table_01(file_info)
             else:
                 tbl_file_list = []
                 for row in range(row_count):
@@ -1889,7 +1892,12 @@ class VideoInfo(QMainWindow):
                 if file_path not in tbl_file_list:
                     print(now())
                     print('Построение:', file_path)
-                    self.create_table_01(file_path)
+                    worker = FFprobeWorker(file_path, params)
+                    worker.signals.scan_result.connect(self.create_table_01)
+                    self.current_workers.append(worker)
+                    self.thread_pool.start(worker)
+                    # self.create_table_01(file_info)
+                    # !!!check for exists in DB
                 else:
                     print('Вы пытаетесь добавить дубликат')
 
@@ -1908,7 +1916,8 @@ class VideoInfo(QMainWindow):
         return item
 
 
-    def create_table_01(self, file_path):
+    def create_table_01(self, file_info):
+        print(file_info)
         self.ui.tableWidget_01.setColumnCount(22)
         if not self.table_mode:
             self.ui.tableWidget_01.setRowCount(0)
@@ -1922,7 +1931,7 @@ class VideoInfo(QMainWindow):
         self.ui.tableWidget_01.setRowCount(row_position)
         self.ui.tableWidget_01.insertRow(row_position)
 
-        file_info = self.mongo.find_file(file_path)
+        # file_info = self.mongo.find_file(file_path)
 
         streams = file_info.get('streams')
         video = list(filter(lambda x: x.get('codec_type') == 'video', streams))
@@ -1932,6 +1941,7 @@ class VideoInfo(QMainWindow):
         format = file_info.get('format')
         ffmpeg_scanners = file_info.get('ffmpeg_scanners')
 
+        file_path = file_info.get('file_path')
         file_name = os.path.basename(file_path)
         a_audio_map = len(audio)
         v_codec_type = video[0].get('codec_type')
