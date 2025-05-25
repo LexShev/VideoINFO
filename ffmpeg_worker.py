@@ -61,13 +61,14 @@ class FFmpegWorker(QRunnable):
                 "null",
                 "-",
             ]
-            output = subprocess.Popen(command,
-                                      stdout=subprocess.PIPE,
-                                      stderr=subprocess.STDOUT,
-                                      universal_newlines=True,
-                                      encoding='utf-8',
-                                      bufsize=1
-                                      )
+            output = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                universal_newlines=True,
+                encoding='utf-8',
+                bufsize=1
+            )
             loudnorm_stats = []
             for line in output.stdout:
                 if not self._is_running:

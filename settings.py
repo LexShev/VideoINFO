@@ -172,7 +172,7 @@ class Settings(QWidget):
 
         self.ui_set.silenceCheckBox.setChecked(eval(self.config['Damage_test_silence']['checkbox']))
         self.ui_set.slnc_dur_txt.setText(self.config['Damage_test_silence']['slnc_dur'])
-        self.ui_set.slnc_noize_txt.setText(self.config['Damage_test_silence']['slnc_noize_txt'])
+        self.ui_set.slnc_noize_txt.setText(self.config['Damage_test_silence']['slnc_noize'])
         self.ui_set.slnc_tc_in.setText(self.config['Damage_test_silence']['slnc_tc_in'])
         self.ui_set.slnc_tc_out.setText(self.config['Damage_test_silence']['slnc_tc_out'])
 
@@ -249,7 +249,7 @@ class Settings(QWidget):
 
         self.config['Damage_test_silence']['checkbox'] = str(self.ui_set.silenceCheckBox.isChecked())
         self.config['Damage_test_silence']['slnc_dur'] = self.ui_set.slnc_dur_txt.text()
-        self.config['Damage_test_silence']['slnc_noize_txt'] = self.ui_set.slnc_noize_txt.text()
+        self.config['Damage_test_silence']['slnc_noize'] = self.ui_set.slnc_noize_txt.text()
         self.config['Damage_test_silence']['slnc_tc_in'] = self.ui_set.slnc_tc_in.text()
         self.config['Damage_test_silence']['slnc_tc_out'] = self.ui_set.slnc_tc_out.text()
 

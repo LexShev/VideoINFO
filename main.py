@@ -28,12 +28,11 @@ from PySide6.QtWidgets import QApplication, QMainWindow, QFileDialog, QHeaderVie
 from create_mongo_table import MongoTableModel
 from ffmpeg_worker import FFmpegWorker
 from ffprobe_single_scan import FFprobeMongo
-from ffprobe_worker import FFprobeWorker
+from ffprobe_worker import FFprobeScan, R128Scan, BlackDetect, SilenceDetect, FreezeDetect
 from mongo_connection import MongoDB
 from settings import Settings
 from sqlite_connection import DataLite
 from posql_connection import DataPos
-from ffmpeg_main import BlackDetect, SilenceDetect, FreezeDetect
 from ffprobe_main import Info
 from forms.ui_db_settings import Ui_DB_Settings
 from forms.ui_videoinfo import Ui_MainWindow
@@ -136,9 +135,35 @@ def convert_tf_to_sec(time):
     sec = (hh*3600)+(mm*60)+ss
     return sec
 
+class SingleProgressDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        self.setWindowTitle("Processing...")
+        self.setWindowModality(Qt.WindowModal)
+        self.setFixedSize(650, 150)
+        self.setStyleSheet(
+            "QPushButton {color: white; background-color:rgba(255,255,255,30);"
+            "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
+            "QPushButton:hover {background-color:rgba(255,255,255,50);}"
+            "QPushButton:pressed{background-color:rgba(255,255,255,70);}"
+        )
+        layout = QVBoxLayout(self)
+        self.label = QLabel('Start scan')
+        self.label.setAlignment(Qt.AlignCenter)
+
+        self.single_progress_bar = QProgressBar()
+
+        self.cancel_button = QPushButton("Cancel")
+        self.cancel_button.setFixedSize(70, 30)
+
+        layout.addWidget(self.label)
+        layout.addWidget(self.single_progress_bar)
+        layout.addWidget(self.cancel_button, alignment=Qt.AlignCenter)
+
 
 class DoubleProgressDialog(QDialog):
-    def __init__(self, parent=None):
+    def  __init__(self, parent=None):
         super().__init__(parent)
 
         self.setWindowTitle("Processing...")
@@ -156,14 +181,18 @@ class DoubleProgressDialog(QDialog):
 
         # Первый прогрессбар с меткой
         self.label_01 = QLabel("Current task:")
+        self.label_01.setAlignment(Qt.AlignCenter)
         self.progress_01 = QProgressBar()
 
         # Второй прогрессбар с меткой
         self.label_02 = QLabel("Total progress:")
+        self.label_02.setAlignment(Qt.AlignCenter)
         self.progress_02 = QProgressBar()
 
         # Кнопка отмены
-        self.cancel_button = QPushButton("Отмена")
+        self.cancel_button = QPushButton("Cancel")
+        self.cancel_button.setFixedSize(70, 30)
+
         # self.cancel_button.clicked.connect(self.reject)
 
         # Добавляем виджеты в layout
@@ -171,7 +200,7 @@ class DoubleProgressDialog(QDialog):
         layout.addWidget(self.progress_01)
         layout.addWidget(self.label_02)
         layout.addWidget(self.progress_02)
-        layout.addWidget(self.cancel_button)
+        layout.addWidget(self.cancel_button, alignment=Qt.AlignCenter)
 
         # Настройка прогрессбаров
         self.progress_01.setRange(0, 100)
@@ -182,9 +211,20 @@ class VideoInfo(QMainWindow):
     def __init__(self):
         super(VideoInfo, self).__init__()
 
-        self.current_workers = []
+        self.progress_dialog = None
+        self.close_progress_dialog_btn = None
+        self.ffmpeg_scanners = []
         self.thread_pool = QThreadPool()
         self.thread_pool.setMaxThreadCount(1)
+        self.double_progress_bar = DoubleProgressDialog(parent=self)
+        self.double_progress_bar.setModal(False)
+        self.double_progress_bar.cancel_button.clicked.connect(self.stop_processing)
+
+        self.ffprobe_scanners = []
+        self.thread_ffprobe = QThreadPool()
+        self.thread_ffprobe.setMaxThreadCount(1)
+        self.single_progress_dialog = SingleProgressDialog(parent=self)
+        self.single_progress_dialog.cancel_button.clicked.connect(self.stop_single_processing)
 
         self.mongo = MongoDB()
         self.settings = Settings()
@@ -192,27 +232,13 @@ class VideoInfo(QMainWindow):
         self.ui = Ui_MainWindow()
         self.ui.setupUi(self)
 
-        self.double_progress_bar = DoubleProgressDialog()
-        self.double_progress_bar.cancel_button.clicked.connect(self.stop_processing)
+
         self.video_info_player = None
 
         self.table_mode = True
         self.switch_tool_flag = False
 
-        self.ui.tableWidget_01.keyPressEvent = self.table_key_press_event
-        self.ui.tableWidget_01.mousePressEvent = self.table_mouse_key_press_event
-        self.ui.tableView_db.keyPressEvent = self.table_db_key_press_event
-        self.ui.tableView_db.mousePressEvent = self.table_db_mouse_key_press_event
-        self.installEventFilter(self)
-        # self.setFixedSize(self.ui.tableWidget_01.sizeHint())
-        self.ui.tableWidget_01.horizontalHeader().setVisible(False)
-        self.ui.tableWidget_01.setColumnCount(1)
-        self.ui.tableWidget_01.hideColumn(0)
-
-        self.ui.tableWidget_01.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
-        self.ui.tableWidget_01.setStyleSheet(u"QTableWidget::item:selected {background-color : rgba(255,255,255,50);}"
-                                             u"QHeaderView::section{color: rgb(255,255,255);}")
-        self.ui.splitter.setStyleSheet(u"QSplitter::handle:hover{background : rgba(255,255,255,50);}")
+        self.init_table_widget()
 
         # colors
         self.red_light = QColor(205, 90, 80)
@@ -260,13 +286,13 @@ class VideoInfo(QMainWindow):
 
         self.ui.r128DtctButton.clicked.connect(self.scan_loudnorm)
         self.ui.r128DtctButton.setToolTip('Сканировать выбранное R128')
-        self.ui.blckDtctButton.clicked.connect(self.prepare_black_detect_selected)
+        self.ui.blckDtctButton.clicked.connect(self.scan_black_detect)
         self.ui.blckDtctButton.setToolTip('Сканировать выбранное Black')
-        self.ui.slncDtctButton.clicked.connect(self.prepare_silence_detect_selected)
+        self.ui.slncDtctButton.clicked.connect(self.scan_silence_detect)
         self.ui.slncDtctButton.setToolTip('Сканировать выбранное Silence')
-        self.ui.frzDtctButton.clicked.connect(self.prepare_freeze_detect_selected)
+        self.ui.frzDtctButton.clicked.connect(self.scan_freeze_detect)
         self.ui.frzDtctButton.setToolTip('Сканировать выбранное Freeze')
-        self.ui.fullDtctButton.clicked.connect(self.prepare_full_detect_selected)
+        self.ui.fullDtctButton.clicked.connect(self.full_detect)
         self.ui.fullDtctButton.setToolTip('Полное сканирование')
         self.ui.migrateButton.clicked.connect(self.file_manage)
         self.ui.migrateButton.setToolTip('Копирование и переименование')
@@ -370,21 +396,21 @@ class VideoInfo(QMainWindow):
         self.ui.actionChoose_default_directory.triggered.connect(self.choose_default_dir)
 
         self.ui.actionRun_Loudness_selected_scan.triggered.connect(self.scan_loudnorm)
-        self.ui.actionRun_SilenceDetect_selected_scan.triggered.connect(self.prepare_silence_detect_selected)
-        self.ui.actionRun_SilenceDetect_single_scan.triggered.connect(self.prepare_silence_detect_single)
-        self.ui.actionRun_SilenceDetect_multiple_scan.triggered.connect(self.prepare_silence_detect_multi)
-        self.ui.actionRun_BlackDetect_selected_scan.triggered.connect(self.prepare_black_detect_selected)
-        self.ui.actionRun_FreezeDetect_selected_scan.triggered.connect(self.prepare_freeze_detect_selected)
-        self.ui.actionRun_FreezeDetect_single_scan.triggered.connect(self.prepare_freeze_detect_single)
-        self.ui.actionRun_FreezeDetect_multiple_scan.triggered.connect(self.prepare_freeze_detect_multi)
-        self.ui.actionRun_Full_selected_scan.triggered.connect(self.prepare_full_detect_selected)
-        self.ui.actionRun_Full_single_scan.triggered.connect(self.prepare_full_detect_single)
-        self.ui.actionRun_Full_multiple_scan.triggered.connect(self.prepare_full_detect_multi)
-        self.ui.actionRun_Background_Loudness_scan.triggered.connect(self.prepare_background_loudnorm_scan)
-        self.ui.actionRun_Background_BlackDetect_scan.triggered.connect(self.prepare_background_blackdetect_scan)
-        self.ui.actionRun_Background_SilenceDetect_scan.triggered.connect(self.prepare_background_silencedetect_scan)
-        self.ui.actionRun_Background_FreezeDetect_scan.triggered.connect(self.prepare_background_freezedetect_scan)
-        self.ui.actionRun_Background_Full_scan.triggered.connect(self.prepare_background_fulldetect_scan)
+        self.ui.actionRun_SilenceDetect_selected_scan.triggered.connect(self.scan_silence_detect)
+        # self.ui.actionRun_SilenceDetect_single_scan.triggered.connect(self.prepare_silence_detect_single)
+        # self.ui.actionRun_SilenceDetect_multiple_scan.triggered.connect(self.prepare_silence_detect_multi)
+        self.ui.actionRun_BlackDetect_selected_scan.triggered.connect(self.scan_black_detect)
+        self.ui.actionRun_FreezeDetect_selected_scan.triggered.connect(self.scan_freeze_detect)
+        # self.ui.actionRun_FreezeDetect_single_scan.triggered.connect(self.prepare_freeze_detect_single)
+        # self.ui.actionRun_FreezeDetect_multiple_scan.triggered.connect(self.prepare_freeze_detect_multi)
+        self.ui.actionRun_Full_selected_scan.triggered.connect(self.full_detect)
+        # self.ui.actionRun_Full_single_scan.triggered.connect(self.prepare_full_detect_single)
+        # self.ui.actionRun_Full_multiple_scan.triggered.connect(self.prepare_full_detect_multi)
+        # self.ui.actionRun_Background_Loudness_scan.triggered.connect(self.prepare_background_loudnorm_scan)
+        # self.ui.actionRun_Background_BlackDetect_scan.triggered.connect(self.prepare_background_blackdetect_scan)
+        # self.ui.actionRun_Background_SilenceDetect_scan.triggered.connect(self.prepare_background_silencedetect_scan)
+        # self.ui.actionRun_Background_FreezeDetect_scan.triggered.connect(self.prepare_background_freezedetect_scan)
+        # self.ui.actionRun_Background_Full_scan.triggered.connect(self.prepare_background_fulldetect_scan)
 
         self.ui.actionOpen_db_editor.triggered.connect(self.switch_db_editor)
 
@@ -554,6 +580,28 @@ class VideoInfo(QMainWindow):
         self.db_connect()
         self.create_db_table()
 
+    def init_table_widget(self):
+        self.ui.tableWidget_01.keyPressEvent = self.table_key_press_event
+        self.ui.tableWidget_01.mousePressEvent = self.table_mouse_key_press_event
+        self.ui.tableView_db.keyPressEvent = self.table_db_key_press_event
+        self.ui.tableView_db.mousePressEvent = self.table_db_mouse_key_press_event
+        self.installEventFilter(self)
+        # self.setFixedSize(self.ui.tableWidget_01.sizeHint())
+        self.ui.tableWidget_01.horizontalHeader().setVisible(True)
+        # self.ui.tableWidget_01.setColumnCount(1)
+        self.ui.tableWidget_01.setColumnCount(22)
+        self.ui.tableWidget_01.setSortingEnabled(False)
+        self.ui.tableWidget_01.setHorizontalHeaderLabels([
+            'file_path', 'Name', 'Bit rate', 'Codec', 'Width', 'Height', 'SAR', 'DAR', 'Frame rate',
+            'Duration', 'Audio map', 'Audio codec', 'Sample rate', 'Channels', 'Audio bit rate',
+            'Integrated', 'True Peak', 'LRA', 'Threshold', 'Black Screen', 'Silence', 'Freeze'
+        ])
+        self.ui.tableWidget_01.hideColumn(0)
+
+        self.ui.tableWidget_01.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+        self.ui.tableWidget_01.setStyleSheet(u"QTableWidget::item:selected {background-color : rgba(255,255,255,50);}"
+                                             u"QHeaderView::section{color: rgb(255,255,255);}")
+        self.ui.splitter.setStyleSheet(u"QSplitter::handle:hover{background : rgba(255,255,255,50);}")
 
     def progress_dialog_init(self):
         if self.progress_dialog is None:
@@ -571,42 +619,132 @@ class VideoInfo(QMainWindow):
                 "QPushButton:pressed{background-color:rgba(255,255,255,70);}"
             )
 
+    def stop_single_processing(self):
+        for scanner in self.ffprobe_scanners:
+            if hasattr(scanner, 'stop'):
+                scanner.stop()
+        self.ffmpeg_scanners.clear()
+        self.single_progress_dialog.close()
+
     def stop_processing(self):
-        for worker in self.current_workers:
-            if hasattr(worker, 'stop'):
-                worker.stop()
-        self.current_workers.clear()
+        for scanner in self.ffmpeg_scanners:
+            if hasattr(scanner, 'stop'):
+                scanner.stop()
+        self.ffmpeg_scanners.clear()
         self.double_progress_bar.close()
 
+        self.ui.r128DtctButton.setEnabled(True)
+        self.colorizeEffect_wt(self.ui.r128DtctButton)
+        self.ui.blckDtctButton.setEnabled(True)
+        self.colorizeEffect_wt(self.ui.blckDtctButton)
+        self.ui.slncDtctButton.setEnabled(True)
+        self.colorizeEffect_wt(self.ui.slncDtctButton)
+        self.ui.frzDtctButton.setEnabled(True)
+        self.colorizeEffect_wt(self.ui.frzDtctButton)
+        self.ui.fullDtctButton.setEnabled(True)
+        self.colorizeEffect_wt(self.ui.fullDtctButton)
 
-    def on_started(self, params, num):
-        pass
+    def on_started(self, params):
+        self.ui.r128DtctButton.setEnabled(False)
+        self.colorizeEffect_gr(self.ui.r128DtctButton)
+        self.ui.blckDtctButton.setEnabled(False)
+        self.colorizeEffect_gr(self.ui.blckDtctButton)
+        self.ui.slncDtctButton.setEnabled(False)
+        self.colorizeEffect_gr(self.ui.slncDtctButton)
+        self.ui.frzDtctButton.setEnabled(False)
+        self.colorizeEffect_gr(self.ui.frzDtctButton)
+        self.ui.fullDtctButton.setEnabled(False)
+        self.colorizeEffect_gr(self.ui.fullDtctButton)
 
-    def on_progress(self, file_path, num):
-        self.double_progress_bar.progress_01.hide()
-        self.double_progress_bar.label_01.setText(file_path)
-        self.double_progress_bar.progress_02.setValue(num)
-
-    def on_progress_01(self, params, file_path, percent):
         num = params.get('num')
-        total_n = params.get('total_n')
-        scan_type = params.get('scan_type')
+        self.double_progress_bar.progress_01.setValue(0)
+        if num == 1:
+            self.double_progress_bar.progress_02.setValue(0)
 
-        self.double_progress_bar.label_01.setText(f'{num}/{total_n} {scan_type}\n{file_path}')
+    # def on_progress(self, file_path, num):
+    #     self.double_progress_bar.progress_01.hide()
+    #     self.double_progress_bar.label_01.setText(file_path)
+    #     self.double_progress_bar.progress_02.setValue(num)
+
+    def on_progress(self, params):
+        file_path = params.get('file_path')
+        num = params.get('num')
+        total_files = params.get('total_files')
+        scan_type = params.get('scan_type')
+        percent = params.get('percent')
+        # total_progress = int(num / total_files * 100)
+        total_progress = int((num - 1) * 100 / total_files + percent / total_files)
+
+        self.double_progress_bar.label_01.setText(f'{num}/{total_files} {scan_type}\n{os.path.basename(file_path)}')
         self.double_progress_bar.progress_01.setValue(percent)
+        self.double_progress_bar.progress_02.setValue(total_progress)
         self.double_progress_bar.show()
 
-    def on_progress_02(self, file_path, total_p):
-        print('signal', total_p, type(total_p))
-        self.double_progress_bar.progress_02.setValue(total_p)
+    def on_finished(self, params):
+        file_path = params.get('file_path')
+        num = params.get('num')
+        total_files = params.get('total_files')
+        total_progress = int(num / total_files * 100)
 
-    def on_finished(self, file_path, result):
         self.double_progress_bar.progress_01.setValue(100)
-        self.add_table_r128()
+        self.double_progress_bar.progress_02.setValue(total_progress)
+        # self.add_table_r128()
+        # self.add_table_black()
+        # self.add_table_silence()
+        # self.add_table_freeze()
+
+        if all(not scanner._is_running for scanner in self.ffmpeg_scanners):
+            self.double_progress_bar.close()
+            dlg = AttentionDialog("INFO", f'Scanning for file\n{file_path}\nwas finished')
+            dlg.exec()
+            self.ffmpeg_scanners.clear()
+
+            self.ui.r128DtctButton.setEnabled(True)
+            self.colorizeEffect_wt(self.ui.r128DtctButton)
+            self.ui.blckDtctButton.setEnabled(True)
+            self.colorizeEffect_wt(self.ui.blckDtctButton)
+            self.ui.slncDtctButton.setEnabled(True)
+            self.colorizeEffect_wt(self.ui.slncDtctButton)
+            self.ui.frzDtctButton.setEnabled(True)
+            self.colorizeEffect_wt(self.ui.frzDtctButton)
+            self.ui.fullDtctButton.setEnabled(True)
+            self.colorizeEffect_wt(self.ui.fullDtctButton)
 
     def on_error(self, file_path, error):
         print(f"Ошибка в {file_path}: {error}")
-        dlg = AttentionDialog("INFO", f"Ошибка в {file_path}: {error}")
+        dlg = AttentionDialog("ERROR", f"Ошибка в {file_path}: {error}")
+        dlg.exec()
+        self.ui.r128DtctButton.setEnabled(True)
+        self.colorizeEffect_wt(self.ui.r128DtctButton)
+        self.ui.blckDtctButton.setEnabled(True)
+        self.colorizeEffect_wt(self.ui.blckDtctButton)
+        self.ui.slncDtctButton.setEnabled(True)
+        self.colorizeEffect_wt(self.ui.slncDtctButton)
+        self.ui.frzDtctButton.setEnabled(True)
+        self.colorizeEffect_wt(self.ui.frzDtctButton)
+        self.ui.fullDtctButton.setEnabled(True)
+        self.colorizeEffect_wt(self.ui.fullDtctButton)
+
+    def on_started_ffprobe(self, params):
+        if params.get('num') == 1:
+            self.single_progress_dialog.single_progress_bar.setValue(0)
+        # pass
+        self.single_progress_dialog.show()
+        # self.progress_dialog_init()
+        # self.single_progress_bar.setValue(0)
+
+    def on_finished_ffprobe(self, params):
+        file_path = params.get('file_path')
+        num = params.get('num')
+        total_files = params.get('total_files')
+        total_progress = int(num / total_files * 100)
+        self.single_progress_dialog.label.setText(f'{num}/{total_files}  FFprobe Scan\n{os.path.basename(file_path)}')
+        self.single_progress_dialog.single_progress_bar.setValue(total_progress)
+        if all(not scanner._is_running for scanner in self.ffprobe_scanners):
+            self.single_progress_dialog.close()
+
+    def on_error_ffprobe(self, file_path, error):
+        dlg = AttentionDialog("ERROR", f"Ошибка в {file_path}: {error}")
         dlg.exec()
 
     def db_connect(self):
@@ -1126,10 +1264,10 @@ class VideoInfo(QMainWindow):
         file_list = self.selected_file_list()
         for file_path in file_list:
             self.mongo.update_file_info(file_path, {'ffmpeg_scanners': {}})
-        self.add_table_r128()
-        self.add_table_black()
-        self.add_table_silence()
-        self.add_table_freeze()
+            self.add_table_r128(file_path, {})
+            self.add_table_black(file_path, {})
+            self.add_table_silence(file_path, {})
+            self.add_table_freeze(file_path, {})
 
     def reset_mediainfo_db(self):
         file_list = self.selected_db_file_list()
@@ -1579,34 +1717,6 @@ class VideoInfo(QMainWindow):
             else:
                 DataPos().create_table(self.read_tbl_name())
 
-
-
-    def header_rename(self, header):
-        header = header.replace('file_name', 'Name')
-        header = header.replace('f_bit_rate', 'Bit rate')
-        header = header.replace('v_codec_name', 'Codec')
-        header = header.replace('v_width', 'Width')
-        header = header.replace('v_height', 'Height')
-        header = header.replace('v_sample_aspect_ratio', 'SAR')
-        header = header.replace('v_display_aspect_ratio', 'DAR')
-        header = header.replace('v_frame_rate', 'Frame rate')
-        header = header.replace('f_duration', 'Duration')
-
-        header = header.replace('a_audio_map', 'Audio map')
-        header = header.replace('a_codec_name', 'Audio codec')
-        header = header.replace('a_sample_rate', 'Sample rate')
-        header = header.replace('a_channels', 'Channels')
-        header = header.replace('a_bit_rate', 'Audio bit rate')
-        header = header.replace('input_i', 'Integrated')
-        header = header.replace('input_tp', 'True Peak')
-        header = header.replace('input_lra', 'LRA')
-        header = header.replace('input_thresh', 'Threshold')
-
-        header = header.replace('black_screen', 'Black Screen')
-        header = header.replace('silence', 'Silence')
-        header = header.replace('freeze', 'Freeze')
-        return header
-
     def selected_db_file_list(self):
         items = self.ui.tableView_db.selectionModel().selectedRows()
         file_list = [item.data() for item in items]
@@ -1629,7 +1739,6 @@ class VideoInfo(QMainWindow):
         if len(file_list) != 0:
             self.ui.tableWidget_01.setRowCount(0)
             self.switch_db_editor()
-            self.progress_dialog_tbl_start(file_list)
 
 
     def move_to_db(self):
@@ -1650,8 +1759,7 @@ class VideoInfo(QMainWindow):
 
     def selected_file_list(self):
         items = self.ui.tableWidget_01.selectionModel().selectedRows()
-        file_list = [item.data() for item in items]
-        return tuple(file_list)
+        return [item.data() for item in items]
 
     def choose_default_dir(self):
         directory = r'\\slave\storage\ContentX'
@@ -1673,233 +1781,66 @@ class VideoInfo(QMainWindow):
         )
         return file_list[0]
 
-    def prepare_background_loudnorm_scan(self):
-        file_list = self.get_file_list()
-        if file_list != ():
-            progress_dialog = self.progress_dialog_init()
-            start_scan = self.start_ffprobe(file_list, progress_dialog)
-            if start_scan:
-                progress_dialog = self.progress_dialog_init()
-                self.backgound_scan_loudnorm(file_list, progress_dialog)
-                QApplication.processEvents()
-
-    def prepare_background_blackdetect_scan(self):
-        file_list = self.get_file_list()
-        if file_list != ():
-            progress_dialog = self.progress_dialog_init()
-            self.backgound_scan_blackdetect(file_list, progress_dialog)
-            QApplication.processEvents()
-
-    def prepare_background_silencedetect_scan(self):
-        file_list = self.get_file_list()
-        if file_list != ():
-            progress_dialog = self.progress_dialog_init()
-            self.backgound_scan_silencedetect(file_list, progress_dialog)
-            QApplication.processEvents()
-
-    def prepare_background_freezedetect_scan(self):
-        file_list = self.get_file_list()
-        if file_list != ():
-            progress_dialog = self.progress_dialog_init()
-            self.backgound_scan_freezedetect(file_list, progress_dialog)
-            QApplication.processEvents()
-
-    def prepare_background_fulldetect_scan(self):
-        file_list = self.get_file_list()
-        if file_list != ():
-            progress_dialog = self.progress_dialog_init()
-            self.ui.tableWidget_01.setRowCount(0)
-            if self.start_ffprobe_bg(file_list, progress_dialog):
-                progress_dialog = self.progress_dialog_init()
-                if self.backgound_scan_loudnorm(file_list, progress_dialog):
-                    self.ui.tableWidget_01.setColumnCount(4)
-                    headers = ['File path', 'Name', 'Loudnorm', 'BlackDetect', 'SilenceDetect', 'FreezeDetect']
-                    self.ui.tableWidget_01.setHorizontalHeaderLabels(headers)
-                    progress_dialog = self.progress_dialog_init()
-                    if self.backgound_fullscan_blackdetect(file_list, progress_dialog):
-                        progress_dialog.setValue(100)
-                        QApplication.processEvents()
-
-                        progress_dialog = self.progress_dialog_init()
-
-                        self.ui.tableWidget_01.setColumnCount(5)
-                        headers = ['File path', 'Name', 'Loudnorm', 'BlackDetect', 'SilenceDetect', 'FreezeDetect']
-                        self.ui.tableWidget_01.setHorizontalHeaderLabels(headers)
-                        if self.backgound_fullscan_silencedetect(file_list, progress_dialog):
-                            QApplication.processEvents()
-                            progress_dialog = self.progress_dialog_init()
-                            self.ui.tableWidget_01.setColumnCount(6)
-                            headers = ['File path', 'Name', 'Loudnorm', 'BlackDetect', 'SilenceDetect', 'FreezeDetect']
-                            self.ui.tableWidget_01.setHorizontalHeaderLabels(headers)
-                            if self.backgound_fullscan_freezedetect(file_list, progress_dialog):
-                                QApplication.processEvents()
-
-    def progress_dialog_tbl_start(self, file_list):
-        pass
-        # progress_dialog = self.progress_dialog_init()
-        # self.prepare_table_01(file_list, progress_dialog)
-
     def start_ffprobe(self):
-        file_list = self.selected_file_list()
+        file_list = self.get_file_list()
         complited = False
+        total_files = len(file_list)
         for num, file_path in enumerate(file_list, 1):
-            params = {'scan_type': 'ffprobe', 'num': num, 'total_n': len(file_list)}
-            # if self.progress_dialog.wasCanceled():
-            #     complited = False
-            #     break
-            if not self.mongo.find_file(file_path):
+            file_info = self.mongo.find_file(file_path)
+            if not file_info:
+                params = {
+                    'file_path': file_path, 'num': num, 'total_files': total_files
+                }
                 print(now())
                 print('Сбор данных для файла', file_path)
-                worker = FFprobeWorker(file_path, params)
-                worker.signals.started.connect(self.on_started)
-                worker.signals.progress.connect(self.on_progress)
-                worker.signals.finished.connect(self.on_finished)
-                worker.signals.error.connect(self.on_error)
-                self.current_workers.append(worker)
-                self.thread_pool.start(worker)
+                scanner = FFprobeScan(**params)
+                scanner.signals.started.connect(self.on_started)
+                scanner.signals.progress.connect(self.on_progress)
+                scanner.signals.finished.connect(self.on_finished)
+                scanner.signals.error.connect(self.on_error)
+                scanner.signals.scan_result.connect(self.create_table_01)
+                self.ffprobe_scanners.append(scanner)
+                self.thread_pool.start(scanner)
                 print(now())
                 print('Сбор данных завершён')
-            complited = True
-        return complited
-
-    def start_single_ffprobe(self, file_path):
-        if not self.mongo.find_file(file_path):
-            print(now())
-            print('Сбор данных для файла', file_path)
-            FFprobeMongo(file_path)
-            print(now())
-            print('Сбор данных завершён')
-
-    def start_ffprobe_bg(self, file_list, progress_dialog):
-        tbl_name = self.read_tbl_name()
-        complited = False
-        # db_file_list = Data().read_bd_multi('file_path')
-        total_files = len(file_list)
-        for i, file_path in enumerate(file_list):
-            self.prepare_table_bg(file_path)
-            self.progress_dialog_label.setText(f'{i + 1}/{total_files}  FFprobe Scan\n{file_path}')
-            progress_dialog.setLabel(self.progress_dialog_label)
-            QApplication.processEvents()
-            if progress_dialog.wasCanceled():
-                complited = False
-                # self.progress_dialog_tbl_start(file_list[:i])
-                break
-            if self.selected_db == 'SQLITE':
-                db_file_path = DataLite().read_bd(self.read_tbl_name(), 'file_path', file_path)
             else:
-                db_file_path = DataPos().read_bd(self.read_tbl_name(), 'file_path', file_path)
-            if file_path != db_file_path:
-                print(now())
-                print('Сбор данных для файла', file_path)
-                try:
-                    Info(self.selected_db, tbl_name, file_path)
-                    print(now())
-                    print('Сбор данных завершён')
-                except Exception:
-                    print(now())
-                    print('Ошибка сбора данных')
-                    pass
-            progress = int((i + 1) / total_files * 100)
-            progress_dialog.setValue(progress)
-            QApplication.processEvents()
+                self.create_table_01(file_path, file_info)
             complited = True
         return complited
-
-    def prepare_table_bg(self, file_path):
-        headers = ['File path', 'Name']
-        self.ui.tableWidget_01.setHorizontalHeaderLabels(headers)
-        file_name = os.path.basename(file_path)
-        row_position = self.ui.tableWidget_01.rowCount()
-        self.ui.tableWidget_01.insertRow(row_position)
-        self.ui.tableWidget_01.setItem(row_position, 0, QtWidgets.QTableWidgetItem(file_path))
-        self.ui.tableWidget_01.setItem(row_position, 1, QtWidgets.QTableWidgetItem(file_name))
-        self.ui.tableWidget_01.repaint()
-        self.table_mode = False
-
-    def create_table_bg(self, file_path, header, status):
-        file_name = os.path.basename(file_path)
-        row_position = self.ui.tableWidget_01.rowCount()
-        head1 = QTableWidgetItem()
-        head1.setData(Qt.EditRole, 'Name')
-        self.ui.tableWidget_01.setHorizontalHeaderItem(1, head1)
-        head2 = QTableWidgetItem()
-        head2.setData(Qt.EditRole, header)
-        self.ui.tableWidget_01.setHorizontalHeaderItem(2, head2)
-        self.ui.tableWidget_01.insertRow(row_position)
-        self.ui.tableWidget_01.setItem(row_position, 0, QtWidgets.QTableWidgetItem(file_path))
-        self.ui.tableWidget_01.setItem(row_position, 1, QtWidgets.QTableWidgetItem(file_name))
-        # self.ui.tableWidget_02.item(row_position, 0).setTextAlignment(Qt.AlignVCenter | Qt.AlignRight)
-        self.ui.tableWidget_01.setItem(row_position, 2, QtWidgets.QTableWidgetItem(str(status)))
-        if status == 'Выполнено':
-            self.ui.tableWidget_01.item(row_position, 2).setBackground(self.green_dark)
-        if status == 'Ошибка':
-            self.ui.tableWidget_01.item(row_position, 2).setBackground(self.red_dark)
-        if status == 'Сканирование проводилось':
-            self.ui.tableWidget_01.item(row_position, 2).setBackground(self.yell_dark)
-        self.ui.tableWidget_01.selectRow(row_position)
-        self.ui.tableWidget_01.repaint()
-        self.table_mode = False
-
-    def create_table_bg_full(self, file_path, row, header, status):
-        if header == 'Loudnorm':
-            col = 2
-        elif header == 'BlackDetect':
-            col = 3
-        elif header == 'SilenceDetect':
-            col = 4
-        elif header == 'FreezeDetect':
-            col = 5
-        else:
-            col = 2
-
-        self.ui.tableWidget_01.setItem(row, col, QtWidgets.QTableWidgetItem(str(status)))
-        if status == 'Выполнено':
-            self.ui.tableWidget_01.item(row, col).setBackground(self.green_dark)
-        if status == 'Ошибка' or status == 'Отменено':
-            self.ui.tableWidget_01.item(row, col).setBackground(self.red_dark)
-        if status == 'Сканирование проводилось':
-            self.ui.tableWidget_01.item(row, col).setBackground(self.yell_dark)
-        self.ui.tableWidget_01.selectRow(row)
-        self.ui.tableWidget_01.repaint()
-        self.table_mode = False
 
     def prepare_table_01(self):
         file_list = self.get_file_list()
         total_files = len(file_list)
         for num, file_path in enumerate(file_list, 1):
-            params = {'scan_type': 'creating_table', 'num': num, 'total_n': len(file_list)}
-            label = f'{num + 1}/{total_files}  Creating Table\n{file_path}'
-            # self.progress_dialog.setLabel(QLabel(label))
-            # if self.progress_dialog.wasCanceled():
-            #     break
             if not os.path.exists(file_path):
                 print('files offline')
                 continue
             row_count = self.ui.tableWidget_01.rowCount()
-            if row_count == 0:
+            tbl_file_list = []
+            for row in range(row_count):
+                tbl_file_path = self.ui.tableWidget_01.item(row, 0).text()
+                tbl_file_list.append(tbl_file_path)
+            if file_path not in tbl_file_list:
                 print(now())
                 print('Построение:', file_path)
-                worker = FFprobeWorker(file_path, params)
-                worker.signals.scan_result.connect(self.create_table_01)
-                self.current_workers.append(worker)
-                self.thread_pool.start(worker)
-                # self.create_table_01(file_info)
-            else:
-                tbl_file_list = []
-                for row in range(row_count):
-                    tbl_file_path = self.ui.tableWidget_01.item(row, 0).text()
-                    tbl_file_list.append(tbl_file_path)
-                if file_path not in tbl_file_list:
-                    print(now())
-                    print('Построение:', file_path)
-                    worker = FFprobeWorker(file_path, params)
-                    worker.signals.scan_result.connect(self.create_table_01)
-                    self.current_workers.append(worker)
-                    self.thread_pool.start(worker)
-                    # self.create_table_01(file_info)
-                    # !!!check for exists in DB
+                file_info = self.mongo.find_file(file_path)
+                if not file_info:
+                    print('Scanning')
+                    params = {
+                        'scan_type': 'creating_table', 'file_path': file_path, 'num': num, 'total_files': total_files
+                    }
+                    scanner = FFprobeScan(**params)
+                    scanner.signals.started.connect(self.on_started_ffprobe)
+                    scanner.signals.finished.connect(self.on_finished_ffprobe)
+                    scanner.signals.error.connect(self.on_error_ffprobe)
+                    scanner.signals.scan_result.connect(self.create_table_01)
+                    self.ffprobe_scanners.append(scanner)
+                    self.thread_pool.start(scanner)
                 else:
-                    print('Вы пытаетесь добавить дубликат')
+                    print('Use DB')
+                    self.create_table_01(file_path, file_info)
+            else:
+                print('Вы пытаетесь добавить дубликат')
 
 
     def init_header(self, header_name):
@@ -1915,23 +1856,7 @@ class VideoInfo(QMainWindow):
         #     item.setData(Qt.EditRole, 'N/A')
         return item
 
-
-    def create_table_01(self, file_info):
-        print(file_info)
-        self.ui.tableWidget_01.setColumnCount(22)
-        if not self.table_mode:
-            self.ui.tableWidget_01.setRowCount(0)
-        self.ui.tableWidget_01.setSortingEnabled(False)
-        print(now())
-        print('Построение таблицы')
-        self.ui.tableWidget_01.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
-
-        row_position = self.ui.tableWidget_01.rowCount()
-        # print('row_position', row_position)
-        self.ui.tableWidget_01.setRowCount(row_position)
-        self.ui.tableWidget_01.insertRow(row_position)
-
-        # file_info = self.mongo.find_file(file_path)
+    def prepare_data(self, file_path, file_info):
 
         streams = file_info.get('streams')
         video = list(filter(lambda x: x.get('codec_type') == 'video', streams))
@@ -1941,7 +1866,6 @@ class VideoInfo(QMainWindow):
         format = file_info.get('format')
         ffmpeg_scanners = file_info.get('ffmpeg_scanners')
 
-        file_path = file_info.get('file_path')
         file_name = os.path.basename(file_path)
         a_audio_map = len(audio)
         v_codec_type = video[0].get('codec_type')
@@ -1969,51 +1893,40 @@ class VideoInfo(QMainWindow):
             input_lra = r128.get('input_lra')
             input_thresh = r128.get('input_thresh')
         else:
-            input_i = ''
-            input_tp = ''
-            input_lra = ''
-            input_thresh = ''
+            input_i, input_tp, input_lra, input_thresh = '', '', '', ''
 
         black_screen = ffmpeg_scanners.get('black_screen')
         silence = ffmpeg_scanners.get('silence')
         freeze = ffmpeg_scanners.get('freeze')
 
-        head_val = (
-            (self.header_rename('file_path'), file_path),
-            (self.header_rename('file_name'), file_name),
-            (self.header_rename('f_bit_rate'), convert_bytes(f_bit_rate, "bit/s")),
-            (self.header_rename('v_codec_name'), v_codec_name),
-            (self.header_rename('v_width'), v_width),
-            (self.header_rename('v_height'), v_height),
-            (self.header_rename('v_sample_aspect_ratio'), v_sample_aspect_ratio),
-            (self.header_rename('v_display_aspect_ratio'), v_display_aspect_ratio),
-            (self.header_rename('v_frame_rate'), convert_fps(v_frame_rate)),
-            (self.header_rename('f_duration'), convert_duration(f_duration, v_frame_rate)),
-            (self.header_rename('a_audio_map'), a_audio_map),
-            (self.header_rename('a_codec_name'), a_codec_name),
-            (self.header_rename('a_sample_rate'), convert_khz(a_sample_rate)),
-            (self.header_rename('a_channels'), a_channels),
-            (self.header_rename('a_bit_rate'), convert_bytes(a_bit_rate, "bit/s")),
-            (self.header_rename('input_i'), input_i),
-            (self.header_rename('input_tp'), input_tp),
-            (self.header_rename('input_lra'), input_lra),
-            (self.header_rename('input_thresh'), input_thresh),
-            (self.header_rename('black_screen'), black_screen),
-            (self.header_rename('silence'), silence),
-            (self.header_rename('freeze'), freeze),
-        )
+        return (file_path, file_name, convert_bytes(f_bit_rate, "bit/s"), v_codec_name, v_width, v_height,
+                v_sample_aspect_ratio, v_display_aspect_ratio, convert_fps(v_frame_rate),
+                convert_duration(f_duration, v_frame_rate), a_audio_map, a_codec_name, convert_khz(a_sample_rate),
+                a_channels, convert_bytes(a_bit_rate, "bit/s"), input_i, input_tp, input_lra, input_thresh,
+                black_screen, silence, freeze)
 
-        for col, (head, val) in enumerate(head_val):
-            self.ui.tableWidget_01.setHorizontalHeaderItem(col, self.init_header(head))
-            self.ui.tableWidget_01.horizontalHeader().setVisible(True)
+    def create_table_01(self, file_path, file_info):
+        # print(file_info)
+        print(now())
+        print('Построение таблицы')
+        self.ui.tableWidget_01.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+
+        row_position = self.ui.tableWidget_01.rowCount()
+        # self.ui.tableWidget_01.setRowCount(row_position)
+        self.ui.tableWidget_01.insertRow(row_position)
+
+        for col, val in enumerate(self.prepare_data(file_path, file_info)):
             self.ui.tableWidget_01.setItem(row_position, col, self.init_item(val))
 
             if row_position % 2 != 0:
                 self.ui.tableWidget_01.item(row_position, col).setBackground(self.grey_light)
             else:
                 self.ui.tableWidget_01.item(row_position, col).setBackground(self.grey_dark)
-
+        self.ui.tableWidget_01.selectRow(row_position)
         self.error_highlight()
+        self.enable_ui_buttons()
+
+    def enable_ui_buttons(self):
         self.ui.delButton.setEnabled(True)
         self.colorizeEffect_wt(self.ui.delButton)
         self.ui.playButton.setEnabled(True)
@@ -2036,8 +1949,6 @@ class VideoInfo(QMainWindow):
         self.colorizeEffect_wt(self.ui.fullDtctButton)
         # self.ui.migrateButton.setEnabled(True)
         self.colorizeEffect_wt(self.ui.migrateButton)
-        self.ui.tableWidget_01.selectRow(row_position)
-        self.ui.tableWidget_01.repaint()  # !!!!
         self.ui.tableWidget_01.setSortingEnabled(True)
         self.table_mode = True
 
@@ -2107,7 +2018,6 @@ class VideoInfo(QMainWindow):
             self.video_info_player = VideoInfoPlayer(file_path)
 
     def table_01_right_click_min(self):
-        # bar = self.parent.menuBar()
         top_menu = QMenu()
 
         menu = top_menu.addMenu("Menu")
@@ -2125,7 +2035,6 @@ class VideoInfo(QMainWindow):
 
 
     def table_01_right_click_max(self):
-        # bar = self.parent.menuBar()
         top_menu = QMenu()
 
         menu = top_menu.addMenu("Menu")
@@ -2159,11 +2068,11 @@ class VideoInfo(QMainWindow):
         elif action == loudnorm_scan:
             self.scan_loudnorm()
         elif action == silencedetect_scan:
-            self.prepare_silence_detect_selected()
+            self.scan_silence_detect()
         elif action == blackdetect_scan:
-            self.prepare_black_detect_selected()
+            self.scan_black_detect()
         elif action == freezedetect_scan:
-            self.prepare_freeze_detect_selected()
+            self.scan_freeze_detect()
         elif action == switch_mode:
             self.switch_db_editor()
 
@@ -2286,6 +2195,11 @@ class VideoInfo(QMainWindow):
         self.ui.tag_v1_r_frame_rate.setText(convert_fps(video1.get('r_frame_rate')))
         self.ui.tag_duration.setText(convert_duration(format.get('duration'), video1.get('r_frame_rate')))
 
+    def alternating_rows(self, row, col):
+        if row % 2 != 0:
+            self.ui.tableWidget_01.item(row, col).setBackground(self.grey_light)
+        else:
+            self.ui.tableWidget_01.item(row, col).setBackground(self.grey_dark)
 
     def error_highlight(self):
 
@@ -2310,71 +2224,81 @@ class VideoInfo(QMainWindow):
 
         for row in range(rows):
             for col in range(columns):
-                if row % 2 != 0:
-                    self.ui.tableWidget_01.item(row, col).setBackground(self.grey_light)
-                else:
-                    self.ui.tableWidget_01.item(row, col).setBackground(self.grey_dark)
+                self.alternating_rows(row, col)
 
-                if col % 2 != 0:
-                    error_red_color = self.red_light
-                    error_yell_color = self.yell_light
-                else:
-                    error_red_color = self.red_dark
-                    error_yell_color = self.yell_dark
-                header = self.ui.tableWidget_01.horizontalHeaderItem(col).text()
-                data = self.ui.tableWidget_01.item(row, col).text()
-                if data != 'нет данных':
-                    if self.header_rename('f_bit_rate') in header:
-                        if not isclose(float(data.split(' ')[0]), v_bit_rate, abs_tol=1):
-                            self.ui.tableWidget_01.item(row, col).setBackground(error_red_color)
-                    if self.header_rename('v_codec_name') in header and data != codec:
-                        self.ui.tableWidget_01.item(row, col).setBackground(error_red_color)
-                    if self.header_rename('v_width') in header and data != width:
-                        self.ui.tableWidget_01.item(row, col).setBackground(error_red_color)
-                    if self.header_rename('v_height') in header and data != height:
-                        self.ui.tableWidget_01.item(row, col).setBackground(error_red_color)
-                    if self.header_rename('v_display_aspect_ratio') in header and data != dar:
-                        self.ui.tableWidget_01.item(row, col).setBackground(error_red_color)
-                    if self.header_rename('v_frame_rate') in header and str(data.split(' ')[0]) != str(frame_rate):
-                        self.ui.tableWidget_01.item(row, col).setBackground(error_red_color)
-                    if self.header_rename('a_sample_rate') in header and str(data.split(' ')[0]) != str(sample_rate):
-                        self.ui.tableWidget_01.item(row, col).setBackground(error_red_color)
-                    if self.header_rename('a_codec_name') in header and data != codec_aud:
-                        self.ui.tableWidget_01.item(row, col).setBackground(error_red_color)
-                    if self.header_rename('a_channels') in header and data != channels:
-                        self.ui.tableWidget_01.item(row, col).setBackground(error_red_color)
-                    if self.header_rename('a_bit_rate') in header and data != 'нет данных' and not isclose(
-                            float(data.split(' ')[0]), a_bit_rate, abs_tol=60):
-                        self.ui.tableWidget_01.item(row, col).setBackground(error_red_color)
-                    if self.header_rename('audio_streams') in header and data != '1':
-                        self.ui.tableWidget_01.item(row, col).setBackground(error_yell_color)
+            item = self.ui.tableWidget_01.item(row, 2)
+            if item.text() and not isclose(float(item.text().split(' ')[0]), v_bit_rate, abs_tol=1):
+                item.setBackground(self.red_light)
 
-                if self.header_rename('input_i') in header:
-                    if data == '-Inf':
-                        self.ui.tableWidget_01.item(row, col).setBackground(error_red_color)
-                    if data and not isclose(float(data), float(r128_i), abs_tol=0.5):
-                        self.ui.tableWidget_01.item(row, col).setBackground(error_yell_color)
-                if self.header_rename('input_tp') in header:
-                    if data == '-Inf':
-                        self.ui.tableWidget_01.item(row, col).setBackground(error_red_color)
-                    if data and not isclose(float(data), float(r128_tp), abs_tol=0.5):
-                        self.ui.tableWidget_01.item(row, col).setBackground(error_yell_color)
-                if self.header_rename('input_lra') in header:
-                    if data and not isclose(float(data), float(r128_lra), abs_tol=5):
-                        self.ui.tableWidget_01.item(row, col).setBackground(error_yell_color)
-                if self.header_rename('input_thresh') in header:
-                    if data and not isclose(float(data), float(r128_thr), abs_tol=0.5):
-                        self.ui.tableWidget_01.item(row, col).setBackground(error_yell_color)
+            item = self.ui.tableWidget_01.item(row, 3)
+            if item.text() != codec:
+                item.setBackground(self.red_dark)
 
-                if self.header_rename('black_start') in header:
-                    if data == 'найден':
-                        self.ui.tableWidget_01.item(row, col).setBackground(error_red_color)
-                if self.header_rename('silence_start') in header:
-                    if data == 'найден':
-                        self.ui.tableWidget_01.item(row, col).setBackground(error_red_color)
-                if self.header_rename('freeze_start') in header:
-                    if data == 'найден':
-                        self.ui.tableWidget_01.item(row, col).setBackground(error_red_color)
+            item = self.ui.tableWidget_01.item(row, 4)
+            if item.text() != width:
+                item.setBackground(self.red_light)
+
+            item = self.ui.tableWidget_01.item(row, 5)
+            if item.text() != height:
+                item.setBackground(self.red_dark)
+
+            item = self.ui.tableWidget_01.item(row, 7)
+            if item.text() != dar:
+                item.setBackground(self.red_dark)
+
+            item = self.ui.tableWidget_01.item(row, 8)
+            if item.text().split(' ')[0] != str(frame_rate):
+                item.setBackground(self.red_light)
+
+            item = self.ui.tableWidget_01.item(row, 10)
+            if item.text() != 1:
+                item.setBackground(self.red_light)
+
+            item = self.ui.tableWidget_01.item(row, 11)
+            if item.text() != codec_aud:
+                item.setBackground(self.red_dark)
+
+            item = self.ui.tableWidget_01.item(row, 12)
+            if item.text().split(' ')[0] != str(sample_rate):
+                item.setBackground(self.red_light)
+
+            item = self.ui.tableWidget_01.item(row, 13)
+            if item.text() != channels:
+                item.setBackground(self.red_dark)
+
+            item = self.ui.tableWidget_01.item(row, 14)
+            if item.text() and not isclose(float(item.text().split(' ')[0]), a_bit_rate, abs_tol=60):
+                item.setBackground(self.red_light)
+
+            item = self.ui.tableWidget_01.item(row, 15)
+            if item.text() == '-Inf':
+                item.setBackground(self.red_dark)
+            elif item.text() and not isclose(float(item.text()), float(r128_i), abs_tol=0.5):
+                item.setBackground(self.yell_dark)
+
+            item = self.ui.tableWidget_01.item(row, 16)
+            if item.text() == '-Inf':
+                item.setBackground(self.red_light)
+            elif item.text() and not isclose(float(item.text()), float(r128_tp), abs_tol=0.5):
+                item.setBackground(self.yell_light)
+
+            item = self.ui.tableWidget_01.item(row, 17)
+            if item.text() and not isclose(float(item.text()), float(r128_lra), abs_tol=5):
+                item.setBackground(self.yell_dark)
+
+            item = self.ui.tableWidget_01.item(row, 18)
+            if item.text() and not isclose(float(item.text()), float(r128_thr), abs_tol=0.5):
+                item.setBackground(self.yell_light)
+                #
+                # if self.header_rename('black_start') in header:
+                #     if data == 'найден':
+                #         self.ui.tableWidget_01.item(row, col).setBackground(error_red_color)
+                # if self.header_rename('silence_start') in header:
+                #     if data == 'найден':
+                #         self.ui.tableWidget_01.item(row, col).setBackground(error_red_color)
+                # if self.header_rename('freeze_start') in header:
+                #     if data == 'найден':
+                #         self.ui.tableWidget_01.item(row, col).setBackground(error_red_color)
         self.check_file_path()
 
     def check_file_path(self):
@@ -2477,11 +2401,6 @@ class VideoInfo(QMainWindow):
                 self.ui.r128_loudness.setText('LOUDNESS METER')
         self.error_highlight()
 
-
-        # self.ui.tableWidget_01.focusPreviousChild()
-        # a1_ch = Data().read_bd('A1_channel_layout', file_path)
-        # self.ui.tag_file_path.setText(a1_ch)
-
     def check_table_bd(self):
         self.sqlite_model.select()
         if self.posql_model.rowCount() == 0:
@@ -2522,17 +2441,14 @@ class VideoInfo(QMainWindow):
     def play_selected(self):
         if self.ui.tableWidget_01.isVisible():
             row_position = self.ui.tableWidget_01.currentRow()
-            try:
+            if row_position > 0:
                 file_path = self.ui.tableWidget_01.item(row_position, 0).text()
-            except Exception:
-                pass
+                os.startfile(os.path.normpath(file_path))
         else:
             file_path = self.selected_db_file_path()
-
-        try:
             os.startfile(os.path.normpath(file_path))
-        except Exception:
-            pass
+
+
 
     def open_folder(self):
         try:
@@ -2544,448 +2460,6 @@ class VideoInfo(QMainWindow):
             subprocess.Popen(fr'explorer /select,"{os.path.abspath(file_path)}"')
         except Exception:
             print('Файл не выделен')
-            pass
-
-
-
-    def progress_dialog_init(self):
-        self.progress_dialog = QProgressDialog()
-        self.close_progress_dialog_btn = QPushButton('Cancel')
-        self.progress_dialog.setCancelButton(self.close_progress_dialog_btn)
-        self.close_progress_dialog_btn.clicked.connect(self.stop_processing)
-        self.progress_dialog.setWindowModality(Qt.WindowModal)
-        self.progress_dialog.setMinimumDuration(0)
-        self.progress_dialog.setFixedSize(650, 150)
-        self.progress_dialog.setStyleSheet(
-            "QPushButton {color: white; background-color:rgba(255,255,255,30);"
-            "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
-            "QPushButton:hover {background-color:rgba(255,255,255,50);}"
-            "QPushButton:pressed{background-color:rgba(255,255,255,70);}"
-        )
-
-    def backgound_scan_loudnorm(self, file_list, progress_dialog):
-        tbl_name = self.read_tbl_name()
-        completed = False
-        r128_i = self.config['Loudness_meter']['r128_i']
-        r128_lra = self.config['Loudness_meter']['r128_lra']
-        r128_tp = self.config['Loudness_meter']['r128_tp']
-        r128_thr = self.config['Loudness_meter']['r128_thr']
-        self.ui.tableWidget_01.horizontalHeader().setVisible(True)
-        # self.ui.tableWidget_01.horizontalHeader().setMinimumHeight(300)
-        # self.ui.tableWidget_01.horizontalHeader().setMaximumHeight(500)
-        self.ui.tableWidget_01.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
-        self.ui.tableWidget_01.setRowCount(0)
-        self.ui.tableWidget_01.setColumnCount(3)
-        total_files = len(file_list)
-        progress = int(1 / total_files * 100)
-        progress_dialog.setValue(progress)
-        QApplication.processEvents()
-        for i, file_path in enumerate(file_list):
-            self.progress_dialog_label.setText(f'{i + 1}/{total_files}  Loudness scan\n{file_path}')
-            progress_dialog.setLabel(self.progress_dialog_label)
-            QApplication.processEvents()
-            if progress_dialog.wasCanceled():
-                completed = False
-                break
-
-            file_info = self.mongo.find_file(file_path)
-            ffmpeg_scanners = file_info.get('ffmpeg_scanners')
-            print('ffmpeg_scanners', ffmpeg_scanners)
-            if not ffmpeg_scanners.get('r128'):
-                try:
-                    print(now())
-                    print('Запуск анализа уровня громкости файла', file_path)
-                    R128().extract_normalization_data(file_path, r128_i, r128_lra, r128_tp)
-                    print(now())
-                    print('Анализ уровня громкости файла', file_path, 'завершён')
-                    # self.create_table_bg(file_path, 'Loudnorm', 'Выполнено')
-                except Exception as e:
-                    print(now())
-                    print('Ошибка анализа уровня громкости', e, sep='\n')
-                    self.create_table_bg(file_path, 'Loudnorm', 'Ошибка')
-                # self.error_highlight()
-                # self.alert.close()
-            else:
-                print(now())
-                print('Сканирование R128 файла', file_path, 'уже проводилось')
-                self.create_table_bg(file_path, 'Loudnorm', 'Сканирование проводилось')
-            progress = int((i + 1) / total_files * 100)
-            progress_dialog.setValue(progress)
-            QApplication.processEvents()
-            completed = True
-        return completed
-
-    def backgound_scan_blackdetect(self, file_list, progress_dialog):
-        tbl_name = self.read_tbl_name()
-        blck_dur = self.config['Damage_test_black']['blck_dur']
-        blck_thr = self.config['Damage_test_black']['blck_thr']
-        blck_tc_in = self.config['Damage_test_black']['blck_tc_in']
-        blck_tc_out = self.config['Damage_test_black']['blck_tc_out']
-        self.ui.tableWidget_01.horizontalHeader().setVisible(True)
-        # self.ui.tableWidget_01.horizontalHeader().setMinimumHeight(300)
-        # self.ui.tableWidget_01.horizontalHeader().setMaximumHeight(500)
-        self.ui.tableWidget_01.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
-        self.ui.tableWidget_01.setRowCount(0)
-        self.ui.tableWidget_01.setColumnCount(3)
-        total_files = len(file_list)
-        progress = int(1 / total_files * 100)
-        progress_dialog.setValue(progress)
-        QApplication.processEvents()
-        for i, file_path in enumerate(file_list):
-            self.progress_dialog_label.setText(f'{i + 1}/{total_files}  BlackDetect scan\n{file_path}')
-            progress_dialog.setLabel(self.progress_dialog_label)
-            QApplication.processEvents()
-            if progress_dialog.wasCanceled():
-                break
-            file_info = self.mongo.find_file(file_path)
-            format = file_info.get('format')
-            f_duration = format.get('duration')
-            ffmpeg_scanners = file_info.get('ffmpeg_scanners')
-            if not ffmpeg_scanners.get('black_screen'):
-                try:
-                    print(now())
-                    print('Анализ чёрного поля файла', file_path)
-                    if self.config['Damage_test_black']['checkbox']:
-                        blck_tc_fin = float(f_duration) - convert_tf_to_sec(blck_tc_out)
-                        BlackDetect(self.selected_db, tbl_name, file_path, blck_dur, blck_thr, blck_tc_fin)
-                    else:
-                        BlackDetect(self.selected_db, tbl_name, file_path, blck_dur, blck_thr, blck_tc_in, blck_tc_out)
-                    print(now())
-                    print('Анализ завершён')
-                    self.create_table_bg(file_path, 'BlackDetect', 'Выполнено')
-                except Exception:
-                    print(now())
-                    print('Ошибка анализа чёрного поля')
-                    self.create_table_bg(file_path, 'BlackDetect', 'Ошибка')
-
-            else:
-                print(now())
-                print('Сканирование чёрного поля файла', file_path, 'уже проводилось')
-                self.create_table_bg(file_path, 'BlackDetect', 'Сканирование проводилось')
-            progress = int((i + 1) / total_files * 100)
-            progress_dialog.setValue(progress)
-            QApplication.processEvents()
-
-    def backgound_scan_silencedetect(self, file_list, progress_dialog):
-        tbl_name = self.read_tbl_name()
-        slnc_dur = self.config['Damage_test_silence']['slnc_dur']
-        slnc_noize = self.config['Damage_test_silence']['slnc_noize']
-        slnc_tc_in = self.config['Damage_test_silence']['slnc_tc_in']
-        slnc_tc_out = self.config['Damage_test_silence']['slnc_tc_out']
-        self.ui.tableWidget_01.horizontalHeader().setVisible(True)
-        # self.ui.tableWidget_01.horizontalHeader().setMinimumHeight(300)
-        # self.ui.tableWidget_01.horizontalHeader().setMaximumHeight(500)
-        self.ui.tableWidget_01.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
-        self.ui.tableWidget_01.setRowCount(0)
-        self.ui.tableWidget_01.setColumnCount(3)
-        total_files = len(file_list)
-        progress = int(1 / total_files * 100)
-        progress_dialog.setValue(progress)
-        QApplication.processEvents()
-        for i, file_path in enumerate(file_list):
-            self.progress_dialog_label.setText(f'{i + 1}/{total_files}  SilenceDetect scan\n{file_path}')
-            progress_dialog.setLabel(self.progress_dialog_label)
-            QApplication.processEvents()
-            if progress_dialog.wasCanceled():
-                break
-            file_info = self.mongo.find_file(file_path)
-            format = file_info.get('format')
-            f_duration = format.get('duration')
-            ffmpeg_scanners = file_info.get('ffmpeg_scanners')
-            if not ffmpeg_scanners.get('silence'):
-                # self.alert.show()
-                try:
-                    print(now())
-                    print('Анализ пропусков звука в', file_path)
-                    if self.config['Damage_test_silence']['checkbox']:
-                        slnc_tc_fin = float(f_duration) - convert_tf_to_sec(slnc_tc_out)
-                        SilenceDetect(self.selected_db, tbl_name, file_path, slnc_dur, slnc_noize, slnc_tc_fin)
-                    else:
-                        SilenceDetect(self.selected_db, tbl_name, file_path, slnc_dur, slnc_noize, slnc_tc_in,
-                                      slnc_tc_out)
-                    print(now())
-                    print('Анализ завершён')
-                    self.create_table_bg(file_path, 'SilenceDetect', 'Выполнено')
-                except Exception:
-                    print(now())
-                    print('Ошибка анализа пропусков звука')
-                    self.create_table_bg(file_path, 'SilenceDetect', 'Ошибка')
-
-            else:
-                print(now())
-                print('Сканирование пропусков звука в', file_path, 'уже проводилось')
-                self.create_table_bg(file_path, 'SilenceDetect', 'Сканирование проводилось')
-            progress = int((i + 1) / total_files * 100)
-            progress_dialog.setValue(progress)
-            QApplication.processEvents()
-
-    def backgound_scan_freezedetect(self, file_list, progress_dialog):
-        tbl_name = self.read_tbl_name()
-        frz_dur = self.config['Damage_test_freeze']['frz_dur']
-        frz_noize = self.config['Damage_test_freeze']['frz_noize']
-        frz_tc_in = self.config['Damage_test_freeze']['frz_tc_in']
-        frz_tc_out = self.config['Damage_test_freeze']['frz_tc_out']
-        self.ui.tableWidget_01.horizontalHeader().setVisible(True)
-        # self.ui.tableWidget_01.horizontalHeader().setMinimumHeight(300)
-        # self.ui.tableWidget_01.horizontalHeader().setMaximumHeight(500)
-        self.ui.tableWidget_01.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
-        self.ui.tableWidget_01.setRowCount(0)
-        self.ui.tableWidget_01.setColumnCount(3)
-        total_files = len(file_list)
-        progress = int(1 / total_files * 100)
-        progress_dialog.setValue(progress)
-        QApplication.processEvents()
-        for i, file_path in enumerate(file_list):
-            self.progress_dialog_label.setText(f'{i + 1}/{total_files}  FreezeDetect scan\n{file_path}')
-            progress_dialog.setLabel(self.progress_dialog_label)
-            QApplication.processEvents()
-            if progress_dialog.wasCanceled():
-                break
-            file_info = self.mongo.find_file(file_path)
-            format = file_info.get('format')
-            f_duration = format.get('duration')
-            ffmpeg_scanners = file_info.get('ffmpeg_scanners')
-            if not ffmpeg_scanners.get('freeze'):
-                try:
-                    print(now())
-                    print('Анализ стоп-кадров в', file_path)
-                    if self.config['Damage_test_freeze']['checkbox']:
-                        frz_tc_fin = float(f_duration) - convert_tf_to_sec(frz_tc_out)
-                        FreezeDetect(self.selected_db, tbl_name, file_path, frz_dur, frz_noize, frz_tc_fin)
-                    else:
-                        FreezeDetect(self.selected_db, tbl_name, file_path, frz_dur, frz_noize, frz_tc_in, frz_tc_out)
-                    print(now())
-                    print('Анализ завершён')
-                    self.create_table_bg(file_path, 'FreezeDetect', 'Выполнено')
-                except Exception:
-                    print(now())
-                    print('Ошибка анализа стоп-кадров')
-                    self.create_table_bg(file_path, 'FreezeDetect', 'Ошибка')
-            else:
-                print(now())
-                print('Анализ стоп-кадров в', file_path, 'уже проводился')
-                self.create_table_bg(file_path, 'FreezeDetect', 'Сканирование проводилось')
-            progress = int((i + 1) / total_files * 100)
-            progress_dialog.setValue(progress)
-            QApplication.processEvents()
-
-    def backgound_fullscan_loudnorm(self, file_list, progress_dialog):
-        tbl_name = self.read_tbl_name()
-        complited = False
-        r128_i = self.config['Loudness_meter']['r128_i']
-        r128_lra = self.config['Loudness_meter']['r128_lra']
-        r128_tp = self.config['Loudness_meter']['r128_tp']
-        r128_thr = self.config['Loudness_meter']['r128_thr']
-        self.ui.tableWidget_01.horizontalHeader().setVisible(True)
-        # self.ui.tableWidget_01.horizontalHeader().setMinimumHeight(300)
-        # self.ui.tableWidget_01.horizontalHeader().setMaximumHeight(500)
-        self.ui.tableWidget_01.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
-        total_files = len(file_list)
-        progress = int(1 / total_files * 100)
-        progress_dialog.setValue(progress)
-        QApplication.processEvents()
-        for i, file_path in enumerate(file_list):
-            self.progress_dialog_label.setText(f'{i + 1}/{total_files}  Loudness scan\n{file_path}')
-            progress_dialog.setLabel(self.progress_dialog_label)
-            QApplication.processEvents()
-            if progress_dialog.wasCanceled():
-                complited = False
-                break
-            file_info = self.mongo.find_file(file_path)
-            ffmpeg_scanners = file_info.get('ffmpeg_scanners')
-            print('ffmpeg_scanners', ffmpeg_scanners)
-            if not ffmpeg_scanners.get('r128'):
-                try:
-                    print(now())
-                    print('Запуск анализа уровня громкости файла', file_path)
-                    R128().extract_normalization_data(file_path, r128_i, r128_lra, r128_tp)
-                    print(now())
-                    print('Анализ уровня громкости файла', file_path, 'завершён')
-                    self.create_table_bg_full(file_path, i, 'Loudness', 'Выполнено')
-                except Exception:
-                    print(now())
-                    print('Ошибка анализа уровня громкости')
-                    self.create_table_bg_full(file_path, i, 'Loudness', 'Ошибка')
-                    pass
-                # self.error_highlight()
-                # self.alert.close()
-            else:
-                print(now())
-                print('Сканирование R128 файла', file_path, 'уже проводилось')
-                self.create_table_bg_full(file_path, i, 'Loudness', 'Сканирование проводилось')
-            progress = int((i + 1) / total_files * 100)
-            progress_dialog.setValue(progress)
-            QApplication.processEvents()
-            complited = True
-        return complited
-
-    def backgound_fullscan_blackdetect(self, file_list, progress_dialog):
-        tbl_name = self.read_tbl_name()
-        complited = False
-        blck_dur = self.config['Damage_test_black']['blck_dur']
-        blck_thr = self.config['Damage_test_black']['blck_thr']
-        blck_tc_in = self.config['Damage_test_black']['blck_tc_in']
-        blck_tc_out = self.config['Damage_test_black']['blck_tc_out']
-        self.ui.tableWidget_01.horizontalHeader().setVisible(True)
-        self.ui.tableWidget_01.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
-        total_files = len(file_list)
-        progress = int(1 / total_files * 100)
-        progress_dialog.setValue(progress)
-        QApplication.processEvents()
-        for i, file_path in enumerate(file_list):
-            self.progress_dialog_label.setText(f'{i + 1}/{total_files}  BlackDetect scan\n{file_path}')
-            progress_dialog.setLabel(self.progress_dialog_label)
-            QApplication.processEvents()
-            if progress_dialog.wasCanceled():
-                status = 'Отменено'
-                complited = False
-                self.create_table_bg_full(file_path, i, 'BlackDetect', status)
-                break
-            file_info = self.mongo.find_file(file_path)
-            format = file_info.get('format')
-            f_duration = format.get('duration')
-            ffmpeg_scanners = file_info.get('ffmpeg_scanners')
-            if not ffmpeg_scanners.get('black_screen'):
-                try:
-                    print(now())
-                    print('Анализ чёрного поля файла', file_path)
-                    if self.config['Damage_test_black']['checkbox']:
-                        blck_tc_fin = float(f_duration) - convert_tf_to_sec(blck_tc_out)
-                        BlackDetect(self.selected_db, tbl_name, file_path, blck_dur, blck_thr, blck_tc_fin)
-                    else:
-                        BlackDetect(self.selected_db, tbl_name, file_path, blck_dur, blck_thr, blck_tc_in, blck_tc_out)
-                    print(now())
-                    print('Анализ завершён')
-                    status = 'Выполнено'
-                except Exception:
-                    print(now())
-                    print('Ошибка анализа чёрного поля')
-                    status = 'Ошибка'
-            else:
-                print(now())
-                print('Сканирование чёрного поля файла', file_path, 'уже проводилось')
-                status = 'Сканирование проводилось'
-            self.create_table_bg_full(file_path, i, 'BlackDetect', status)
-            progress = int((i + 1) / total_files * 100)
-            progress_dialog.setValue(progress)
-            QApplication.processEvents()
-            complited = True
-        return complited
-
-    def backgound_fullscan_silencedetect(self, file_list, progress_dialog):
-        tbl_name = self.read_tbl_name()
-        complited = False
-        slnc_dur = self.config['Damage_test_silence']['slnc_dur']
-        slnc_noize = self.config['Damage_test_silence']['slnc_noize']
-        slnc_tc_in = self.config['Damage_test_silence']['slnc_tc_in']
-        slnc_tc_out = self.config['Damage_test_silence']['slnc_tc_out']
-        self.ui.tableWidget_01.horizontalHeader().setVisible(True)
-        # self.ui.tableWidget_01.horizontalHeader().setMinimumHeight(300)
-        # self.ui.tableWidget_01.horizontalHeader().setMaximumHeight(500)
-        self.ui.tableWidget_01.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
-        total_files = len(file_list)
-        progress = int(1 / total_files * 100)
-        progress_dialog.setValue(progress)
-        QApplication.processEvents()
-        for i, file_path in enumerate(file_list):
-            self.progress_dialog_label.setText(f'{i + 1}/{total_files}  SilenceDetect scan\n{file_path}')
-            progress_dialog.setLabel(self.progress_dialog_label)
-            QApplication.processEvents()
-            if progress_dialog.wasCanceled():
-                complited = False
-                status = 'Отменено'
-                self.create_table_bg_full(file_path, i, 'SilenceDetect', status)
-                break
-            file_info = self.mongo.find_file(file_path)
-            format = file_info.get('format')
-            f_duration = format.get('duration')
-            ffmpeg_scanners = file_info.get('ffmpeg_scanners')
-            if not ffmpeg_scanners.get('silence'):
-                try:
-                    print(now())
-                    print('Анализ пропусков звука в', file_path)
-                    if self.config['Damage_test_silence']['checkbox']:
-                        slnc_tc_fin = float(f_duration) - convert_tf_to_sec(slnc_tc_out)
-                        SilenceDetect(self.selected_db, tbl_name, file_path, slnc_dur, slnc_noize, slnc_tc_fin)
-                    else:
-                        SilenceDetect(self.selected_db, tbl_name, file_path, slnc_dur, slnc_noize, slnc_tc_in, slnc_tc_out)
-                    print(now())
-                    print('Анализ завершён')
-                    status = 'Выполнено'
-                except Exception:
-                    print(now())
-                    print('Ошибка анализа пропусков звука')
-                    status = 'Ошибка'
-                # self.error_highlight()
-            else:
-                print(now())
-                print('Сканирование пропусков звука в', file_path, 'уже проводилось')
-                status = 'Сканирование проводилось'
-            self.create_table_bg_full(file_path, i, 'SilenceDetect', status)
-            progress = int((i + 1) / total_files * 100)
-            progress_dialog.setValue(progress)
-            QApplication.processEvents()
-            complited = True
-        return complited
-
-    def backgound_fullscan_freezedetect(self, file_list, progress_dialog):
-        tbl_name = self.read_tbl_name()
-        complited = False
-        frz_dur = self.config['Damage_test_freeze']['frz_dur']
-        frz_noize = self.config['Damage_test_freeze']['frz_noize']
-        frz_tc_in = self.config['Damage_test_freeze']['frz_tc_in']
-        frz_tc_out = self.config['Damage_test_freeze']['frz_tc_out']
-        self.ui.tableWidget_01.horizontalHeader().setVisible(True)
-        # self.ui.tableWidget_01.horizontalHeader().setMinimumHeight(300)
-        # self.ui.tableWidget_01.horizontalHeader().setMaximumHeight(500)
-        self.ui.tableWidget_01.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
-        total_files = len(file_list)
-        progress = int(1 / total_files * 100)
-        progress_dialog.setValue(progress)
-        QApplication.processEvents()
-        for i, file_path in enumerate(file_list):
-            self.progress_dialog_label.setText(f'{i + 1}/{total_files}  FreezeDetect scan\n{file_path}')
-            progress_dialog.setLabel(self.progress_dialog_label)
-            QApplication.processEvents()
-            if progress_dialog.wasCanceled():
-                complited = False
-                status = 'Отменено'
-                for _ in range(i, total_files):
-                    self.create_table_bg_full(file_path, i, 'FreezeDetect', status)
-                break
-            file_info = self.mongo.find_file(file_path)
-            format = file_info.get('format')
-            f_duration = format.get('duration')
-            ffmpeg_scanners = file_info.get('ffmpeg_scanners')
-            if not ffmpeg_scanners.get('freeze'):
-                try:
-                    print(now())
-                    print('Анализ стоп-кадров в', file_path)
-                    if self.config['Damage_test_freeze']['checkbox']:
-                        frz_tc_fin = float(f_duration) - convert_tf_to_sec(frz_tc_out)
-                        FreezeDetect(self.selected_db, tbl_name, file_path, frz_dur, frz_noize, frz_tc_fin)
-                    else:
-                        FreezeDetect(self.selected_db, tbl_name, file_path, frz_dur, frz_noize, frz_tc_in, frz_tc_out)
-                    print(now())
-                    print('Анализ завершён')
-                    status = 'Выполнено'
-                except Exception:
-                    print(now())
-                    print('Ошибка анализа стоп-кадров')
-                    status = 'Ошибка'
-                # self.error_highlight()
-                # self.alert.close()
-            else:
-                print(now())
-                print('Анализ стоп-кадров в', file_path, 'уже проводился')
-                status = 'Сканирование проводилось'
-            self.create_table_bg_full(file_path, i, 'FreezeDetect', status)
-            progress = int((i + 1) / total_files * 100)
-            progress_dialog.setValue(progress)
-            QApplication.processEvents()
-            complited = True
-        return complited
-
 
     def scan_loudnorm(self):
         file_list = self.selected_file_list()
@@ -2995,12 +2469,13 @@ class VideoInfo(QMainWindow):
         r128_tp = self.config['Loudness_meter']['r128_tp']
         r128_thr = self.config['Loudness_meter']['r128_thr']
 
-        self.double_progress_bar.progress_02.setValue(0)
+        total_files = len(file_list)
         for num, file_path in enumerate(file_list, 1):
-            total_files = len(file_list)
-            total_p = int(num / total_files * 100)
-            print(total_p)
-            params = {'scan_type': 'loudness_scan', 'num': num, 'total_p': total_p, 'total_n': total_files}
+            params = {
+                'file_path': file_path,
+                'scan_type': 'loudness_scan', 'num': num, 'total_files': total_files,
+                'r128_i': r128_i, 'r128_lra': r128_lra, 'r128_tp': r128_tp, 'r128_thr': r128_thr
+            }
             file_info = self.mongo.find_file(file_path)
             dur = convert_fram_duration(file_info)
             # if self.progress_dialog.wasCanceled():
@@ -3009,519 +2484,179 @@ class VideoInfo(QMainWindow):
             if not ffmpeg_scanners.get('r128'):
                 print(now())
                 print('Запуск анализа уровня громкости файла', file_path)
-                worker = FFmpegWorker(file_path, params, dur, r128_i, r128_lra, r128_tp)
-
-                worker.signals.started.connect(self.on_started)
-                worker.signals.progress_01.connect(self.on_progress_01)
-                worker.signals.progress_02.connect(self.on_progress_02)
-                worker.signals.finished.connect(self.on_finished)
-                worker.signals.error.connect(self.on_error)
-                self.current_workers.append(worker)
-                self.thread_pool.start(worker)
-
-                print(now())
-                print('Анализ уровня громкости файла', file_path, 'завершён')
+                scanner = R128Scan(**params)
+                scanner.signals.started.connect(self.on_started)
+                scanner.signals.progress.connect(self.on_progress)
+                scanner.signals.finished.connect(self.on_finished)
+                scanner.signals.scan_result.connect(self.add_table_r128)
+                scanner.signals.error.connect(self.on_error)
+                self.ffmpeg_scanners.append(scanner)
+                self.thread_pool.start(scanner)
             else:
                 print(now())
                 print('Сканирование R128 файла', file_path, 'уже проводилось')
 
-        self.double_progress_bar.close()
-
-
-
-    def prepare_black_detect_selected(self):
-        file_list = self.selected_file_list()
-        progress_dialog = self.progress_dialog_init()
-        self.scan_black_detect(file_list, progress_dialog)
-
-    def scan_black_detect(self, tbl_file_list, progress_dialog):
-        tbl_name = self.read_tbl_name()
+    def scan_black_detect(self):
+        tbl_file_list = self.selected_file_list()
         total_files = len(tbl_file_list)
-        print(total_files)
-        if total_files == 1:
-            progress_dialog.setValue(0)
-            self.progress_dialog_label.setText(f'BlackDetect scan\n{tbl_file_list[0]}')
-            progress_dialog.setLabel(self.progress_dialog_label)
-            progress_dialog.show()
-        else:
-            progress = int(1 / total_files * 100)
-            progress_dialog.setValue(progress)
-        QApplication.processEvents()
         blck_dur = self.config['Damage_test_black']['blck_dur']
         blck_thr = self.config['Damage_test_black']['blck_thr']
         blck_tc_in = self.config['Damage_test_black']['blck_tc_in']
         blck_tc_out = self.config['Damage_test_black']['blck_tc_out']
-        for i, tbl_file_path in enumerate(tbl_file_list):
-            if total_files != 1:
-                self.progress_dialog_label.setText(f'{i + 1}/{total_files}  BlackDetect scan\n{tbl_file_path}')
-                progress_dialog.setLabel(self.progress_dialog_label)
-            QApplication.processEvents()
-            if progress_dialog.wasCanceled():
-                break
+        for num, tbl_file_path in enumerate(tbl_file_list, 1):
             file_info = self.mongo.find_file(tbl_file_path)
-            format = file_info.get('format')
-            f_duration = format.get('duration')
             ffmpeg_scanners = file_info.get('ffmpeg_scanners')
-            if not ffmpeg_scanners.get('black_screen'):
-                try:
-                    print(now())
-                    print('Анализ чёрного поля файла', tbl_file_path)
-                    if self.config['Damage_test_black']['checkbox']:
-                        blck_tc_fin = float(f_duration) - convert_tf_to_sec(blck_tc_out)
-                        BlackDetect(self.selected_db, tbl_name, tbl_file_path, blck_dur, blck_thr, blck_tc_fin)
-                    else:
-                        BlackDetect(self.selected_db, tbl_name, tbl_file_path, blck_dur, blck_thr, blck_tc_in, blck_tc_out)
-                except Exception:
-                    print(now())
-                    print('Ошибка анализа чёрного поля')
-                    pass
-                self.add_table_black()
-                # self.error_highlight()
+            if not ffmpeg_scanners.get('black_detect'):
+                params = {
+                    'file_path': tbl_file_path,
+                    'scan_type': 'black_detect_scan', 'num': num, 'total_files': total_files,
+                    'black_check': self.config['Damage_test_black']['checkbox'],
+                    'blck_dur': blck_dur, 'blck_thr': blck_thr, 'blck_tc_in': blck_tc_in, 'blck_tc_out': blck_tc_out
+                }
+                print(now())
+                print('Анализ чёрного поля файла', tbl_file_path)
+                scanner = BlackDetect(**params)
+                scanner.signals.started.connect(self.on_started)
+                scanner.signals.progress.connect(self.on_progress)
+                scanner.signals.finished.connect(self.on_finished)
+                scanner.signals.scan_result.connect(self.add_table_black)
+                scanner.signals.error.connect(self.on_error)
+                self.ffprobe_scanners.append(scanner)
+                self.thread_pool.start(scanner)
             else:
                 print('Сканирование чёрного поля файла', tbl_file_path, 'уже проводилось')
 
-            progress = int((i + 1) / total_files * 100)
-            progress_dialog.setValue(progress)
-            QApplication.processEvents()
-
-
-    def prepare_silence_detect_selected(self):
-        file_list = self.selected_file_list()
-        progress_dialog = self.progress_dialog_init()
-        self.scan_silence_detect(file_list, progress_dialog)
-
-    def prepare_silence_detect_single(self):
-        row_position = self.ui.tableWidget_01.currentRow()
-        file_path = self.ui.tableWidget_01.item(row_position, 0).text()
-        progress_dialog = self.progress_dialog_init()
-        self.scan_silence_detect((file_path,), progress_dialog)
-
-    def prepare_silence_detect_multi(self):
-        tbl_file_list = self.file_queue()
-        progress_dialog = self.progress_dialog_init()
-        self.scan_silence_detect(tuple(tbl_file_list), progress_dialog)
-
-    def update_ui(self):
-        QApplication.processEvents()
-
-    def scan_silence_detect(self, tbl_file_list, progress_dialog_slnc):
-        tbl_name = self.read_tbl_name()
+    def scan_silence_detect(self):
+        tbl_file_list = self.selected_file_list()
+        total_files = len(tbl_file_list)
         slnc_dur = self.config['Damage_test_silence']['slnc_dur']
         slnc_noize = self.config['Damage_test_silence']['slnc_noize']
         slnc_tc_in = self.config['Damage_test_silence']['slnc_tc_in']
         slnc_tc_out = self.config['Damage_test_silence']['slnc_tc_out']
-        total_files = len(tbl_file_list)
-        progress = int(1 / total_files * 100)
-        progress_dialog_slnc.setValue(progress)
-        self.update_ui()
-        for i, tbl_file_path in enumerate(tbl_file_list):
-            self.progress_dialog_label.setText(f'{i + 1}/{total_files}  SilenceDetect scan\n{tbl_file_path}')
-            progress_dialog_slnc.setLabel(self.progress_dialog_label)
-            QApplication.processEvents()
-            if progress_dialog_slnc.wasCanceled():
-                break
+        for num, tbl_file_path in enumerate(tbl_file_list, 1):
+            # if progress_dialog_slnc.wasCanceled():
+            #     break
             file_info = self.mongo.find_file(tbl_file_path)
-            format = file_info.get('format')
-            f_duration = format.get('duration')
             ffmpeg_scanners = file_info.get('ffmpeg_scanners')
-            if not ffmpeg_scanners.get('silence'):
-                # self.alert.show()
-                try:
-                    print(now())
-                    print('Анализ пропусков звука в', tbl_file_path)
-                    if self.config['Damage_test_silence']['checkbox']:
-                        slnc_tc_fin = float(f_duration) - convert_tf_to_sec(slnc_tc_out)
-                        SilenceDetect(self.selected_db, tbl_name, tbl_file_path, slnc_dur, slnc_noize, slnc_tc_fin)
-                    else:
-                        SilenceDetect(self.selected_db, tbl_name, tbl_file_path, slnc_dur, slnc_noize, slnc_tc_in, slnc_tc_out)
-                except Exception:
-                    print(now())
-                    print('Ошибка анализа пропусков звука')
-                    pass
-                self.add_table_silence()
-                # self.error_highlight()
-                # self.alert.close()
+            if not ffmpeg_scanners.get('silence_detect'):
+                params = {
+                    'file_path': tbl_file_path,
+                    'scan_type': 'silence_detect_scan', 'num': num, 'total_files': total_files,
+                    'silence_check': self.config['Damage_test_silence']['checkbox'],
+                    'slnc_dur': slnc_dur, 'slnc_noize': slnc_noize, 'slnc_tc_in': slnc_tc_in, 'slnc_tc_out': slnc_tc_out
+                }
+                print(now())
+                print('Анализ пропусков звука в', tbl_file_path)
+                scanner = SilenceDetect(**params)
+                scanner.signals.started.connect(self.on_started)
+                scanner.signals.progress.connect(self.on_progress)
+                scanner.signals.finished.connect(self.on_finished)
+                scanner.signals.scan_result.connect(self.add_table_silence)
+                scanner.signals.error.connect(self.on_error)
+                self.ffmpeg_scanners.append(scanner)
+                self.thread_pool.start(scanner)
             else:
                 print('Сканирование пропусков звука в', tbl_file_path, 'уже проводилось')
 
-            progress = int((i + 1) / total_files * 100)
-            progress_dialog_slnc.setValue(progress)
-            QApplication.processEvents()
-
-    def prepare_freeze_detect_selected(self):
-        file_list = self.selected_file_list()
-        progress_dialog_frz = QProgressDialog("FreezeDetect scan", "Cancel", 0, 100, self)
-        progress_dialog_frz.setWindowTitle("Processing...")
-        progress_dialog_frz.setWindowModality(Qt.WindowModal)
-        progress_dialog_frz.setMinimumDuration(0)
-        progress_dialog_frz.setFixedSize(650, 150)
-        progress_dialog_frz.setStyleSheet("QPushButton {color: white; background-color:rgba(255,255,255,30);"
-                                          "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
-                                          "QPushButton:hover {background-color:rgba(255,255,255,50);}"
-                                          "QPushButton:pressed{background-color:rgba(255,255,255,70);}")
-
-        self.scan_freeze_detect(file_list, progress_dialog_frz)
-        progress_dialog_frz.setValue(100)
-
-    def prepare_freeze_detect_single(self):
-        row_position = self.ui.tableWidget_01.currentRow()
-        file_path = self.ui.tableWidget_01.item(row_position, 0).text()
-        progress_dialog_frz = QProgressDialog("FreezeDetect scan", "Cancel", 0, 100, self)
-        progress_dialog_frz.setWindowTitle("Processing...")
-        progress_dialog_frz.setWindowModality(Qt.WindowModal)
-        progress_dialog_frz.setMinimumDuration(0)
-        progress_dialog_frz.setFixedSize(650, 150)
-        progress_dialog_frz.setStyleSheet("QPushButton {color: white; background-color:rgba(255,255,255,30);"
-                                          "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
-                                          "QPushButton:hover {background-color:rgba(255,255,255,50);}"
-                                          "QPushButton:pressed{background-color:rgba(255,255,255,70);}")
-
-        self.scan_freeze_detect((file_path,), progress_dialog_frz)
-        progress_dialog_frz.setValue(100)
-
-    def prepare_freeze_detect_multi(self):
-        tbl_file_list = self.file_queue()
-        progress_dialog_frz = QProgressDialog("FreezeDetect scan", "Cancel", 0, 100, self)
-        progress_dialog_frz.setWindowTitle("Processing...")
-        progress_dialog_frz.setWindowModality(Qt.WindowModal)
-        progress_dialog_frz.setMinimumDuration(0)
-        progress_dialog_frz.setFixedSize(650, 150)
-        progress_dialog_frz.setStyleSheet("QPushButton {color: white; background-color:rgba(255,255,255,30);"
-                                          "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
-                                          "QPushButton:hover {background-color:rgba(255,255,255,50);}"
-                                          "QPushButton:pressed{background-color:rgba(255,255,255,70);}")
-
-        self.scan_freeze_detect(tuple(tbl_file_list), progress_dialog_frz)
-        progress_dialog_frz.setValue(100)
-
-    def scan_freeze_detect(self, tbl_file_list, progress_dialog_frz):
-        tbl_name = self.read_tbl_name()
+    def scan_freeze_detect(self):
+        tbl_file_list = self.selected_file_list()
+        total_files = len(tbl_file_list)
         frz_dur = self.config['Damage_test_freeze']['frz_dur']
         frz_noize = self.config['Damage_test_freeze']['frz_noize']
         frz_tc_in = self.config['Damage_test_freeze']['frz_tc_in']
         frz_tc_out = self.config['Damage_test_freeze']['frz_tc_out']
-        total_files = len(tbl_file_list)
-        progress = int(1 / total_files * 100)
-        progress_dialog_frz.setValue(progress)
-        QApplication.processEvents()
-        for i, tbl_file_path in enumerate(tbl_file_list):
-            self.progress_dialog_label.setText(f'{i + 1}/{total_files}  FreezeDetect scan\n{tbl_file_path}')
-            progress_dialog_frz.setLabel(self.progress_dialog_label)
-            QApplication.processEvents()
-            if progress_dialog_frz.wasCanceled():
-                break
-            if self.selected_db == 'SQLITE':
-                db_wf_file_path = DataLite().read_bd(tbl_name, 'freeze_duration', tbl_file_path)
-                duration = DataLite().read_bd(tbl_name, 'F_duration', tbl_file_path)
-            else:
-                db_wf_file_path = DataPos().read_bd(tbl_name, 'freeze_duration', tbl_file_path)
-                duration = DataPos().read_bd(tbl_name, 'F_duration', tbl_file_path)
-            if db_wf_file_path == 'нет данных':
-                # self.alert.show()
-                try:
-                    print(now())
-                    print('Анализ стоп-кадров в', tbl_file_path)
-                    if self.config['Damage_test_freeze']['checkbox']:
-                        frz_tc_fin = float(duration) - convert_tf_to_sec(frz_tc_out)
-                        FreezeDetect(self.selected_db, tbl_name, tbl_file_path, frz_dur, frz_noize, frz_tc_fin)
-                    else:
-                        FreezeDetect(self.selected_db, tbl_name, tbl_file_path, frz_dur, frz_noize, frz_tc_in, frz_tc_out)
-                except Exception:
-                    print(now())
-                    print('Ошибка анализа стоп-кадров')
-                    pass
-                self.add_table_freeze()
-                # self.error_highlight()
-                # self.alert.close()
+        for num, tbl_file_path in enumerate(tbl_file_list, 1):
+            file_info = self.mongo.find_file(tbl_file_path)
+            ffmpeg_scanners = file_info.get('ffmpeg_scanners')
+            if not ffmpeg_scanners.get('freeze_detect'):
+                print(now())
+                print('Анализ стоп-кадров в', tbl_file_path)
+                params = {
+                    'file_path': tbl_file_path,
+                    'scan_type': 'freeze_detect_scan', 'num': num, 'total_files': total_files,
+                    'freeze_check': self.config['Damage_test_freeze']['checkbox'],
+                    'frz_dur': frz_dur, 'frz_noize': frz_noize, 'frz_tc_in': frz_tc_in,
+                    'frz_tc_out': frz_tc_out
+                }
+                scanner = FreezeDetect(**params)
+                scanner.signals.started.connect(self.on_started)
+                scanner.signals.progress.connect(self.on_progress)
+                scanner.signals.finished.connect(self.on_finished)
+                scanner.signals.scan_result.connect(self.add_table_freeze)
+                scanner.signals.error.connect(self.on_error)
+                self.ffmpeg_scanners.append(scanner)
+                self.thread_pool.start(scanner)
             else:
                 print('Анализ стоп-кадров в', tbl_file_path, 'уже проводился')
 
-            progress = int((i + 1) / total_files * 100)
-            progress_dialog_frz.setValue(progress)
-            QApplication.processEvents()
 
-    def prepare_full_detect_selected(self):
-        file_list = self.selected_file_list()
-        progress_dialog_r128 = QProgressDialog("Loudness scan", "Cancel", 0, 100, self)
-        progress_dialog_r128.setWindowTitle("Processing...")
-        progress_dialog_r128.setWindowModality(Qt.WindowModal)
-        progress_dialog_r128.setMinimumDuration(0)
-        progress_dialog_r128.setFixedSize(650, 150)
-        progress_dialog_r128.setStyleSheet("QPushButton {color: white; background-color:rgba(255,255,255,30);"
-                                           "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
-                                           "QPushButton:hover {background-color:rgba(255,255,255,50);}"
-                                           "QPushButton:pressed{background-color:rgba(255,255,255,70);}")
+    def full_detect(self):
+        self.scan_loudnorm()
+        self.scan_black_detect()
+        self.scan_silence_detect()
+        self.scan_freeze_detect()
 
-        self.scan_loudnorm(file_list, progress_dialog_r128)
-        progress_dialog_r128.setValue(100)
-
-        progress_dialog_blck = QProgressDialog("BlackDetect scan", "Cancel", 0, 100, self)
-        progress_dialog_blck.setWindowTitle("Processing...")
-        progress_dialog_blck.setWindowModality(Qt.WindowModal)
-        progress_dialog_blck.setMinimumDuration(0)
-        progress_dialog_blck.setFixedSize(650, 150)
-        progress_dialog_blck.setStyleSheet("QPushButton {color: white; background-color:rgba(255,255,255,30);"
-                                           "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
-                                           "QPushButton:hover {background-color:rgba(255,255,255,50);}"
-                                           "QPushButton:pressed{background-color:rgba(255,255,255,70);}")
-
-        self.scan_black_detect(file_list, progress_dialog_blck)
-        progress_dialog_blck.setValue(100)
-
-        progress_dialog_slnc = QProgressDialog("SilenceDetect scan", "Cancel", 0, 100, self)
-        progress_dialog_slnc.setWindowTitle("Processing...")
-        progress_dialog_slnc.setWindowModality(Qt.WindowModal)
-        progress_dialog_slnc.setMinimumDuration(0)
-        progress_dialog_slnc.setFixedSize(650, 150)
-        progress_dialog_slnc.setStyleSheet("QPushButton {color: white; background-color:rgba(255,255,255,30);"
-                                           "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
-                                           "QPushButton:hover {background-color:rgba(255,255,255,50);}"
-                                           "QPushButton:pressed{background-color:rgba(255,255,255,70);}")
-
-        self.scan_silence_detect(file_list, progress_dialog_slnc)
-        progress_dialog_slnc.setValue(100)
-
-        progress_dialog_frz = QProgressDialog("FreezeDetect scan", "Cancel", 0, 100, self)
-        progress_dialog_frz.setWindowTitle("Processing...")
-        progress_dialog_frz.setWindowModality(Qt.WindowModal)
-        progress_dialog_frz.setMinimumDuration(0)
-        progress_dialog_frz.setFixedSize(650, 150)
-        progress_dialog_frz.setStyleSheet("QPushButton {color: white; background-color:rgba(255,255,255,30);"
-                                          "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
-                                          "QPushButton:hover {background-color:rgba(255,255,255,50);}"
-                                          "QPushButton:pressed{background-color:rgba(255,255,255,70);}")
-
-        self.scan_freeze_detect(file_list, progress_dialog_frz)
-        progress_dialog_frz.setValue(100)
-
-    def prepare_full_detect_single(self):
-        row_position = self.ui.tableWidget_01.currentRow()
-        file_path = self.ui.tableWidget_01.item(row_position, 0).text()
-        progress_dialog_r128 = QProgressDialog("Loudness scan", "Cancel", 0, 100, self)
-        progress_dialog_r128.setWindowTitle("Processing...")
-        progress_dialog_r128.setWindowModality(Qt.WindowModal)
-        progress_dialog_r128.setMinimumDuration(0)
-        progress_dialog_r128.setFixedSize(650, 150)
-        progress_dialog_r128.setStyleSheet("QPushButton {color: white; background-color:rgba(255,255,255,30);"
-                                           "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
-                                           "QPushButton:hover {background-color:rgba(255,255,255,50);}"
-                                           "QPushButton:pressed{background-color:rgba(255,255,255,70);}")
-
-        self.scan_loudnorm((file_path,), progress_dialog_r128)
-        progress_dialog_r128.setValue(100)
-
-        progress_dialog_blck = QProgressDialog("BlackDetect scan", "Cancel", 0, 100, self)
-        progress_dialog_blck.setWindowTitle("Processing...")
-        progress_dialog_blck.setWindowModality(Qt.WindowModal)
-        progress_dialog_blck.setMinimumDuration(0)
-        progress_dialog_blck.setFixedSize(650, 150)
-        progress_dialog_blck.setStyleSheet("QPushButton {color: white; background-color:rgba(255,255,255,30);"
-                                           "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
-                                           "QPushButton:hover {background-color:rgba(255,255,255,50);}"
-                                           "QPushButton:pressed{background-color:rgba(255,255,255,70);}")
-
-        self.scan_black_detect((file_path,), progress_dialog_blck)
-        progress_dialog_blck.setValue(100)
-
-        progress_dialog_slnc = QProgressDialog("SilenceDetect scan", "Cancel", 0, 100, self)
-        progress_dialog_slnc.setWindowTitle("Processing...")
-        progress_dialog_slnc.setWindowModality(Qt.WindowModal)
-        progress_dialog_slnc.setMinimumDuration(0)
-        progress_dialog_slnc.setFixedSize(650, 150)
-        progress_dialog_slnc.setStyleSheet("QPushButton {color: white; background-color:rgba(255,255,255,30);"
-                                           "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
-                                           "QPushButton:hover {background-color:rgba(255,255,255,50);}"
-                                           "QPushButton:pressed{background-color:rgba(255,255,255,70);}")
-
-        self.scan_silence_detect((file_path,), progress_dialog_slnc)
-        progress_dialog_slnc.setValue(100)
-
-        progress_dialog_frz = QProgressDialog("FreezeDetect scan", "Cancel", 0, 100, self)
-        progress_dialog_frz.setWindowTitle("Processing...")
-        progress_dialog_frz.setWindowModality(Qt.WindowModal)
-        progress_dialog_frz.setMinimumDuration(0)
-        progress_dialog_frz.setFixedSize(650, 150)
-        progress_dialog_frz.setStyleSheet("QPushButton {color: white; background-color:rgba(255,255,255,30);"
-                                          "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
-                                          "QPushButton:hover {background-color:rgba(255,255,255,50);}"
-                                          "QPushButton:pressed{background-color:rgba(255,255,255,70);}")
-
-        self.scan_freeze_detect((file_path,), progress_dialog_frz)
-        progress_dialog_frz.setValue(100)
-
-    def prepare_full_detect_multi(self):
-        tbl_file_list = self.file_queue()
-        progress_dialog_r128 = QProgressDialog("Loudness scan", "Cancel", 0, 100, self)
-        progress_dialog_r128.setWindowTitle("Processing...")
-        progress_dialog_r128.setWindowModality(Qt.WindowModal)
-        progress_dialog_r128.setMinimumDuration(0)
-        progress_dialog_r128.setFixedSize(650, 150)
-        progress_dialog_r128.setStyleSheet("QPushButton {color: white; background-color:rgba(255,255,255,30);"
-                                           "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
-                                           "QPushButton:hover {background-color:rgba(255,255,255,50);}"
-                                           "QPushButton:pressed{background-color:rgba(255,255,255,70);}")
-
-        self.scan_loudnorm(tuple(tbl_file_list), progress_dialog_r128)
-        progress_dialog_r128.setValue(100)
-
-        progress_dialog_blck = QProgressDialog("BlackDetect scan", "Cancel", 0, 100, self)
-        progress_dialog_blck.setWindowTitle("Processing...")
-        progress_dialog_blck.setWindowModality(Qt.WindowModal)
-        progress_dialog_blck.setMinimumDuration(0)
-        progress_dialog_blck.setFixedSize(650, 150)
-        progress_dialog_blck.setStyleSheet("QPushButton {color: white; background-color:rgba(255,255,255,30);"
-                                           "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
-                                           "QPushButton:hover {background-color:rgba(255,255,255,50);}"
-                                           "QPushButton:pressed{background-color:rgba(255,255,255,70);}")
-
-        self.scan_black_detect(tuple(tbl_file_list), progress_dialog_blck)
-        progress_dialog_blck.setValue(100)
-
-        progress_dialog_slnc = QProgressDialog("SilenceDetect scan", "Cancel", 0, 100, self)
-        progress_dialog_slnc.setWindowTitle("Processing...")
-        progress_dialog_slnc.setWindowModality(Qt.WindowModal)
-        progress_dialog_slnc.setMinimumDuration(0)
-        progress_dialog_slnc.setFixedSize(650, 150)
-        progress_dialog_slnc.setStyleSheet("QPushButton {color: white; background-color:rgba(255,255,255,30);"
-                                           "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
-                                           "QPushButton:hover {background-color:rgba(255,255,255,50);}"
-                                           "QPushButton:pressed{background-color:rgba(255,255,255,70);}")
-
-        self.scan_silence_detect(tuple(tbl_file_list), progress_dialog_slnc)
-        progress_dialog_slnc.setValue(100)
-
-        progress_dialog_frz = QProgressDialog("FreezeDetect scan", "Cancel", 0, 100, self)
-        progress_dialog_frz.setWindowTitle("Processing...")
-        progress_dialog_frz.setWindowModality(Qt.WindowModal)
-        progress_dialog_frz.setMinimumDuration(0)
-        progress_dialog_frz.setFixedSize(650, 150)
-        progress_dialog_frz.setStyleSheet("QPushButton {color: white; background-color:rgba(255,255,255,30);"
-                                          "border: 1px solid rgba(255,255,255,40); border-radius:3px;}"
-                                          "QPushButton:hover {background-color:rgba(255,255,255,50);}"
-                                          "QPushButton:pressed{background-color:rgba(255,255,255,70);}")
-
-        self.scan_freeze_detect(tuple(tbl_file_list), progress_dialog_frz)
-        progress_dialog_frz.setValue(100)
-
-    def add_table_r128(self):
+    def add_table_r128(self, file_path, scan_result):
         rows = self.ui.tableWidget_01.rowCount()
         columns = self.ui.tableWidget_01.columnCount()
         for row in range(rows):
-            file_path = self.ui.tableWidget_01.item(row, 0).text()
-            file_info = self.mongo.find_file(file_path)
-            r128 = file_info.get('ffmpeg_scanners', {}).get('r128', {})
+            tbl_file_path = self.ui.tableWidget_01.item(row, 0).text()
+            print(file_path, tbl_file_path)
             for col in range(columns):
-                header = self.ui.tableWidget_01.horizontalHeaderItem(col).text()
-
-                if self.header_rename('input_i') in header:
-                    self.ui.tableWidget_01.setItem(row, col, self.init_item(r128.get('input_i')))
-                if self.header_rename('input_tp') in header:
-                    self.ui.tableWidget_01.setItem(row, col, self.init_item(r128.get('input_tp')))
-                if self.header_rename('input_lra') in header:
-                    self.ui.tableWidget_01.setItem(row, col, self.init_item(r128.get('input_lra')))
-                if self.header_rename('input_thresh') in header:
-                    self.ui.tableWidget_01.setItem(row, col, self.init_item(r128.get('input_thresh')))
-                if row % 2 != 0:
-                    self.ui.tableWidget_01.item(row, col).setBackground(self.grey_light)
-                else:
-                    self.ui.tableWidget_01.item(row, col).setBackground(self.grey_dark)
-        self.error_highlight()
-        self.ui.tableWidget_01.repaint()
-
-    def add_table_black(self):
-        rows = self.ui.tableWidget_01.rowCount()
-        columns = self.ui.tableWidget_01.columnCount()
-        for row in range(rows):
-            # self.ui.tableWidget_01.repaint()
-            file_path = self.ui.tableWidget_01.item(row, 0).text()
-            for col in range(columns):
-                header = self.ui.tableWidget_01.horizontalHeaderItem(col).text()
-                if self.selected_db == 'SQLITE':
-                    db_data = DataLite().read_bd(self.read_tbl_name(), 'black_start', file_path)
-                else:
-                    db_data = DataPos().read_bd(self.read_tbl_name(), 'black_start', file_path)
-                if self.header_rename('black_start') in header:
-                    if db_data != 'нет данных' and db_data != 'не найдено':
-                        item = QTableWidgetItem()
-                        item.setData(Qt.EditRole, 'найден')
-                        self.ui.tableWidget_01.setItem(row, col, item)
-                    if db_data == 'не найдено':
-                        item = QTableWidgetItem()
-                        item.setData(Qt.EditRole, 'не найдено')
-                        self.ui.tableWidget_01.setItem(row, col, item)
-                    if db_data == 'нет данных':
-                        item = QTableWidgetItem()
-                        item.setData(Qt.EditRole, 'нет данных')
-                        self.ui.tableWidget_01.setItem(row, col, item)
-                    # self.ui.tableWidget_01.showColumn(col)
-                if row % 2 != 0:
-                    self.ui.tableWidget_01.item(row, col).setBackground(self.grey_light)
-                else:
-                    self.ui.tableWidget_01.item(row, col).setBackground(self.grey_dark)
+                if tbl_file_path == file_path:
+                    item = self.ui.tableWidget_01.item(row, 15)
+                    item.setText(scan_result.get('input_i', 'not scanned'))
+                    item = self.ui.tableWidget_01.item(row, 16)
+                    item.setText(scan_result.get('input_tp', 'not scanned'))
+                    item = self.ui.tableWidget_01.item(row, 17)
+                    item.setText(scan_result.get('input_lra', 'not scanned'))
+                    item = self.ui.tableWidget_01.item(row, 18)
+                    item.setText(scan_result.get('input_thresh', 'not scanned'))
         self.error_highlight()
 
-    def add_table_silence(self):
+    def add_table_black(self, file_path, scan_result):
         rows = self.ui.tableWidget_01.rowCount()
-        columns = self.ui.tableWidget_01.columnCount()
+        if scan_result and scan_result != 'N/A':
+            item_text = 'found'
+        elif not scan_result:
+            item_text = 'not scanned'
+        else:
+            item_text = 'N/A'
         for row in range(rows):
-            # self.ui.tableWidget_01.repaint()
-            file_path = self.ui.tableWidget_01.item(row, 0).text()
-            for col in range(columns):
-                header = self.ui.tableWidget_01.horizontalHeaderItem(col).text()
-                if self.selected_db == 'SQLITE':
-                    db_data = DataLite().read_bd(self.read_tbl_name(), 'silence_start', file_path)
-                else:
-                    db_data = DataPos().read_bd(self.read_tbl_name(), 'silence_start', file_path)
-                if self.header_rename('silence_start') in header:
-                    if db_data != 'нет данных' and db_data != 'не найдено':
-                        item = QTableWidgetItem()
-                        item.setData(Qt.EditRole, 'найден')
-                        self.ui.tableWidget_01.setItem(row, col, item)
-                    if db_data == 'не найдено':
-                        item = QTableWidgetItem()
-                        item.setData(Qt.EditRole, 'не найдено')
-                        self.ui.tableWidget_01.setItem(row, col, item)
-                    if db_data == 'нет данных':
-                        item = QTableWidgetItem()
-                        item.setData(Qt.EditRole, 'нет данных')
-                        self.ui.tableWidget_01.setItem(row, col, item)
-                    # self.ui.tableWidget_01.showColumn(col)
-                if row % 2 != 0:
-                    self.ui.tableWidget_01.item(row, col).setBackground(self.grey_light)
-                else:
-                    self.ui.tableWidget_01.item(row, col).setBackground(self.grey_dark)
+            tbl_file_path = self.ui.tableWidget_01.item(row, 0).text()
+            if tbl_file_path == file_path:
+                item = self.ui.tableWidget_01.item(row, 19)
+                item.setText(item_text)
         self.error_highlight()
 
-    def add_table_freeze(self):
+    def add_table_silence(self, file_path, scan_result):
         rows = self.ui.tableWidget_01.rowCount()
-        columns = self.ui.tableWidget_01.columnCount()
+        if scan_result and scan_result != 'N/A':
+            item_text = 'found'
+        elif not scan_result:
+            item_text = 'not scanned'
+        else:
+            item_text = 'N/A'
         for row in range(rows):
-            # self.ui.tableWidget_01.repaint()
-            file_path = self.ui.tableWidget_01.item(row, 0).text()
-            for col in range(columns):
-                header = self.ui.tableWidget_01.horizontalHeaderItem(col).text()
-                if self.selected_db == 'SQLITE':
-                    db_data = DataLite().read_bd(self.read_tbl_name(), 'freeze_start', file_path)
-                else:
-                    db_data = DataPos().read_bd(self.read_tbl_name(), 'freeze_start', file_path)
-                if self.header_rename('freeze_start') in header:
-                    if db_data != 'нет данных' and db_data != 'не найдено':
-                        item = QTableWidgetItem()
-                        item.setData(Qt.EditRole, 'найден')
-                        self.ui.tableWidget_01.setItem(row, col, item)
-                    if db_data == 'не найдено':
-                        item = QTableWidgetItem()
-                        item.setData(Qt.EditRole, 'не найдено')
-                        self.ui.tableWidget_01.setItem(row, col, item)
-                    if db_data == 'нет данных':
-                        item = QTableWidgetItem()
-                        item.setData(Qt.EditRole, 'нет данных')
-                        self.ui.tableWidget_01.setItem(row, col, item)
-                    # self.ui.tableWidget_01.showColumn(col)
-                if row % 2 != 0:
-                    self.ui.tableWidget_01.item(row, col).setBackground(self.grey_light)
-                else:
-                    self.ui.tableWidget_01.item(row, col).setBackground(self.grey_dark)
+            tbl_file_path = self.ui.tableWidget_01.item(row, 0).text()
+            if tbl_file_path == file_path:
+                item = self.ui.tableWidget_01.item(row, 20)
+                item.setText(item_text)
+        self.error_highlight()
+
+    def add_table_freeze(self, file_path, scan_result):
+        rows = self.ui.tableWidget_01.rowCount()
+        if scan_result and scan_result != 'N/A':
+            item_text = 'found'
+        elif not scan_result:
+            item_text = 'not scanned'
+        else:
+            item_text = 'N/A'
+        for row in range(rows):
+            tbl_file_path = self.ui.tableWidget_01.item(row, 0).text()
+            if tbl_file_path == file_path:
+                item = self.ui.tableWidget_01.item(row, 21)
+                item.setText(item_text)
         self.error_highlight()
 
     def wave_view(self):
@@ -3559,13 +2694,6 @@ class VideoInfo(QMainWindow):
             self.ui.r128_loudness.setText('LOUDNESS METER')
 
     def closeEvent(self, event):
-        # if self.selected_db == 'SQLITE':
-        #     # self.model.clear()
-        #     DataLite().close_db()
-        #     self.sqlite_db.close()
-        #     os.remove(self.sqlite_db_name)
-        # else:
-        #     DataPos().close_db()
         print('Завершение')
 
 
@@ -3602,7 +2730,7 @@ class AttentionDialog(QDialog):
         message = QLabel(message_text)
         message.setAlignment(Qt.AlignCenter)
         self.layout.addWidget(message)
-        self.layout.addWidget(self.buttonBox)
+        self.layout.addWidget(self.buttonBox, alignment=Qt.AlignCenter)
         self.setLayout(self.layout)
 
 

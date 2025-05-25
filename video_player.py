@@ -384,12 +384,14 @@ class VideoInfoPlayer(QWidget):
     def video_player(self):
         self.videoOutput = QVideoWidget(self.dialog.video_player_img)
         self.videoOutput.resize(960, 540)
+        self.play_pause_check()
         self.player.setVideoOutput(self.videoOutput)
         self.player.setSource(QUrl.fromLocalFile(self.file_path))
         self.videoOutput.show()
         self.positionSlider.show()
         self.positionSlider.updateGeometry()
         self.read_marks()
+
 
     def play_video(self):
         self.player.play()
@@ -595,3 +597,8 @@ class VideoInfoPlayer(QWidget):
         # volume = self.volumeslider.value()
         self.audioOutput.setVolume(volume / 100)
         self.vol_mute_check()
+
+    def closeEvent(self, event):
+        self.player.stop()
+        print('Stop')
+        event.accept()

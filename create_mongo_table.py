@@ -93,10 +93,7 @@ def prepare_data(file_info):
         input_lra = r128.get('input_lra')
         input_thresh = r128.get('input_thresh')
     else:
-        input_i = ''
-        input_tp = ''
-        input_lra = ''
-        input_thresh = ''
+        input_i, input_tp, input_lra, input_thresh = '', '', '', ''
 
     black_screen = ffmpeg_scanners.get('black_screen')
     silence = ffmpeg_scanners.get('silence')
