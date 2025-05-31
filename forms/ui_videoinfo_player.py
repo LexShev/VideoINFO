@@ -8,19 +8,14 @@
 ## WARNING! All changes made in this file will be lost when recompiling UI file!
 ################################################################################
 
-from PySide6.QtCore import (QCoreApplication, QDate, QDateTime, QLocale,
-    QMetaObject, QObject, QPoint, QRect,
-    QSize, QTime, QUrl, Qt)
-from PySide6.QtGui import (QBrush, QColor, QConicalGradient, QCursor,
-    QFont, QFontDatabase, QGradient, QIcon,
-    QImage, QKeySequence, QLinearGradient, QPainter,
-    QPalette, QPixmap, QRadialGradient, QTransform)
-from PySide6.QtWidgets import (QAbstractItemView, QApplication, QButtonGroup, QDialog,
-    QFrame, QGridLayout, QHBoxLayout, QHeaderView,
-    QLabel, QPushButton, QSizePolicy, QSlider,
-    QSpacerItem, QTableWidget, QTableWidgetItem, QToolBox,
-    QToolButton, QVBoxLayout, QWidget)
-import icons_rc
+from PySide6.QtCore import (QCoreApplication, QMetaObject, QRect,
+                            QSize, Qt)
+from PySide6.QtGui import (QFont, QIcon,
+                           QPixmap)
+from PySide6.QtWidgets import (QAbstractItemView, QButtonGroup, QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QSlider,
+                               QSpacerItem, QTableWidget, QTableWidgetItem, QToolBox,
+                               QToolButton, QVBoxLayout, QWidget)
+
 
 class Ui_VideoINFO_Player(object):
     def setupUi(self, VideoINFO_Player):
@@ -204,7 +199,7 @@ class Ui_VideoINFO_Player(object):
         self.video_player_img.setMinimumSize(QSize(960, 540))
         self.video_player_img.setMaximumSize(QSize(960, 540))
         self.video_player_img.setBaseSize(QSize(960, 540))
-        self.video_player_img.setPixmap(QPixmap(u":/imgs/img/video_player.png"))
+        self.video_player_img.setPixmap(QPixmap(u":/imgs/imgs/video_player.png"))
         self.video_player_img.setScaledContents(True)
         self.video_player_img.setAlignment(Qt.AlignLeading|Qt.AlignLeft|Qt.AlignVCenter)
         self.video_player_img.setWordWrap(False)

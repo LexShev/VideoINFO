@@ -3,7 +3,7 @@
 ################################################################################
 ## Form generated from reading UI file 'ui_videoinfo.ui'
 ##
-## Created by: Qt User Interface Compiler version 6.6.3
+## Created by: Qt User Interface Compiler version 6.9.0
 ##
 ## WARNING! All changes made in this file will be lost when recompiling UI file!
 ################################################################################
@@ -22,7 +22,8 @@ from PySide6.QtWidgets import (QAbstractItemView, QAbstractScrollArea, QApplicat
     QSpacerItem, QSplitter, QTableView, QTableWidget,
     QTableWidgetItem, QToolBar, QToolButton, QVBoxLayout,
     QWidget)
-import icons_rc
+
+from resources import icons_rc
 
 class Ui_MainWindow(object):
     def setupUi(self, MainWindow):
@@ -30,13 +31,13 @@ class Ui_MainWindow(object):
             MainWindow.setObjectName(u"MainWindow")
         MainWindow.resize(1500, 924)
         icon = QIcon()
-        icon.addFile(u":/logo/logo/LOGO_VideoInfo_450x450.png", QSize(), QIcon.Normal, QIcon.Off)
+        icon.addFile(u":/logo/logo/LOGO_VideoInfo_450x450.png", QSize(), QIcon.Mode.Normal, QIcon.State.Off)
         MainWindow.setWindowIcon(icon)
         MainWindow.setStyleSheet(u"background-color: rgb(40, 40, 45);\n"
 "font-family: Noto Sans;")
         self.actionAdd_files = QAction(MainWindow)
         self.actionAdd_files.setObjectName(u"actionAdd_files")
-        self.actionAdd_files.setMenuRole(QAction.TextHeuristicRole)
+        self.actionAdd_files.setMenuRole(QAction.MenuRole.TextHeuristicRole)
         self.actionDelete_selected_file = QAction(MainWindow)
         self.actionDelete_selected_file.setObjectName(u"actionDelete_selected_file")
         self.actionPlay_selected_file = QAction(MainWindow)
@@ -162,8 +163,8 @@ class Ui_MainWindow(object):
         self.buttons.setBaseSize(QSize(46, 0))
         self.buttons.setStyleSheet(u"color: rgb(146, 146, 146);\n"
 "border: 0px;")
-        self.buttons.setFrameShape(QFrame.Box)
-        self.buttons.setFrameShadow(QFrame.Raised)
+        self.buttons.setFrameShape(QFrame.Shape.Box)
+        self.buttons.setFrameShadow(QFrame.Shadow.Raised)
         self.verticalLayout_5 = QVBoxLayout(self.buttons)
         self.verticalLayout_5.setObjectName(u"verticalLayout_5")
         self.verticalLayout_5.setContentsMargins(3, 1, 3, 3)
@@ -185,12 +186,12 @@ class Ui_MainWindow(object):
 "background-color:rgba(255,255,255,70);\n"
 "}")
         icon1 = QIcon()
-        icon1.addFile(u":/bl_img/icons/menu_FILL0_wght400_GRAD0_opsz24.svg", QSize(), QIcon.Normal, QIcon.Off)
+        icon1.addFile(u":/bl_img/icons/menu_FILL0_wght400_GRAD0_opsz24.svg", QSize(), QIcon.Mode.Normal, QIcon.State.Off)
         self.switchToolButton.setIcon(icon1)
         self.switchToolButton.setIconSize(QSize(20, 35))
-        self.switchToolButton.setPopupMode(QToolButton.DelayedPopup)
-        self.switchToolButton.setToolButtonStyle(Qt.ToolButtonIconOnly)
-        self.switchToolButton.setArrowType(Qt.NoArrow)
+        self.switchToolButton.setPopupMode(QToolButton.ToolButtonPopupMode.DelayedPopup)
+        self.switchToolButton.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        self.switchToolButton.setArrowType(Qt.ArrowType.NoArrow)
 
         self.verticalLayout_5.addWidget(self.switchToolButton)
 
@@ -216,10 +217,10 @@ class Ui_MainWindow(object):
 "background-color:rgba(255,255,255,70);\n"
 "}")
         icon2 = QIcon()
-        icon2.addFile(u":/bl_img/icons/list_alt_add_FILL0_wght400_GRAD0_opsz24.svg", QSize(), QIcon.Normal, QIcon.Off)
+        icon2.addFile(u":/bl_img/icons/list_alt_add_FILL0_wght400_GRAD0_opsz24.svg", QSize(), QIcon.Mode.Normal, QIcon.State.Off)
         self.move_to_tableButton.setIcon(icon2)
         self.move_to_tableButton.setIconSize(QSize(20, 35))
-        self.move_to_tableButton.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        self.move_to_tableButton.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
 
         self.verticalLayout_5.addWidget(self.move_to_tableButton)
 
@@ -241,10 +242,10 @@ class Ui_MainWindow(object):
 "background-color:rgba(255,255,255,70);\n"
 "}")
         icon3 = QIcon()
-        icon3.addFile(u":/bl_img/icons/scan_delete_FILL0_wght400_GRAD0_opsz24.svg", QSize(), QIcon.Normal, QIcon.Off)
+        icon3.addFile(u":/bl_img/icons/scan_delete_FILL0_wght400_GRAD0_opsz24.svg", QSize(), QIcon.Mode.Normal, QIcon.State.Off)
         self.delete_from_dbButton.setIcon(icon3)
         self.delete_from_dbButton.setIconSize(QSize(20, 35))
-        self.delete_from_dbButton.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        self.delete_from_dbButton.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
 
         self.verticalLayout_5.addWidget(self.delete_from_dbButton)
 
@@ -266,10 +267,10 @@ class Ui_MainWindow(object):
 "background-color:rgba(255,255,255,70);\n"
 "}")
         icon4 = QIcon()
-        icon4.addFile(u":/bl_img/icons/move_group_FILL0_wght400_GRAD0_opsz24.svg", QSize(), QIcon.Normal, QIcon.Off)
+        icon4.addFile(u":/bl_img/icons/move_group_FILL0_wght400_GRAD0_opsz24.svg", QSize(), QIcon.Mode.Normal, QIcon.State.Off)
         self.move_to_dbButton.setIcon(icon4)
         self.move_to_dbButton.setIconSize(QSize(20, 35))
-        self.move_to_dbButton.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        self.move_to_dbButton.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
 
         self.verticalLayout_5.addWidget(self.move_to_dbButton)
 
@@ -283,7 +284,7 @@ class Ui_MainWindow(object):
         self.addButton.setMinimumSize(QSize(40, 30))
         self.addButton.setMaximumSize(QSize(110, 30))
         self.addButton.setBaseSize(QSize(40, 30))
-        self.addButton.setContextMenuPolicy(Qt.DefaultContextMenu)
+        self.addButton.setContextMenuPolicy(Qt.ContextMenuPolicy.DefaultContextMenu)
         self.addButton.setStyleSheet(u"QToolButton{\n"
 "	 color: rgb(255, 255, 255);\n"
 "     background-color:rgba(255,255,255,30);\n"
@@ -297,10 +298,10 @@ class Ui_MainWindow(object):
 "background-color:rgba(255,255,255,70);\n"
 "}")
         icon5 = QIcon()
-        icon5.addFile(u":/bl_img/icons/add_FILL0_wght400_GRAD0_opsz24.svg", QSize(), QIcon.Normal, QIcon.Off)
+        icon5.addFile(u":/bl_img/icons/add_FILL0_wght400_GRAD0_opsz24.svg", QSize(), QIcon.Mode.Normal, QIcon.State.Off)
         self.addButton.setIcon(icon5)
         self.addButton.setIconSize(QSize(20, 35))
-        self.addButton.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        self.addButton.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
 
         self.verticalLayout_5.addWidget(self.addButton)
 
@@ -322,7 +323,7 @@ class Ui_MainWindow(object):
 "background-color:rgba(255,255,255,70);\n"
 "}")
         icon6 = QIcon()
-        icon6.addFile(u":/bl_img/icons/remove_FILL0_wght400_GRAD0_opsz24.svg", QSize(), QIcon.Normal, QIcon.Off)
+        icon6.addFile(u":/bl_img/icons/remove_FILL0_wght400_GRAD0_opsz24.svg", QSize(), QIcon.Mode.Normal, QIcon.State.Off)
         self.delButton.setIcon(icon6)
         self.delButton.setIconSize(QSize(20, 35))
 
@@ -346,7 +347,7 @@ class Ui_MainWindow(object):
 "background-color:rgba(255,255,255,70);\n"
 "}")
         icon7 = QIcon()
-        icon7.addFile(u":/bl_img/icons/play_arrow_FILL0_wght400_GRAD0_opsz24.svg", QSize(), QIcon.Normal, QIcon.Off)
+        icon7.addFile(u":/bl_img/icons/play_arrow_FILL0_wght400_GRAD0_opsz24.svg", QSize(), QIcon.Mode.Normal, QIcon.State.Off)
         self.playButton.setIcon(icon7)
         self.playButton.setIconSize(QSize(20, 35))
 
@@ -370,10 +371,10 @@ class Ui_MainWindow(object):
 "background-color:rgba(255,255,255,70);\n"
 "}")
         icon8 = QIcon()
-        icon8.addFile(u":/bl_img/icons/folder_open_FILL0_wght400_GRAD0_opsz24.svg", QSize(), QIcon.Normal, QIcon.Off)
+        icon8.addFile(u":/bl_img/icons/folder_open_FILL0_wght400_GRAD0_opsz24.svg", QSize(), QIcon.Mode.Normal, QIcon.State.Off)
         self.openButton.setIcon(icon8)
         self.openButton.setIconSize(QSize(20, 35))
-        self.openButton.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        self.openButton.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
 
         self.verticalLayout_5.addWidget(self.openButton)
 
@@ -399,7 +400,7 @@ class Ui_MainWindow(object):
 "background-color:rgba(255,255,255,70);\n"
 "}")
         icon9 = QIcon()
-        icon9.addFile(u":/bl_img/icons/equalizer_FILL0_wght400_GRAD0_opsz24.svg", QSize(), QIcon.Normal, QIcon.Off)
+        icon9.addFile(u":/bl_img/icons/equalizer_FILL0_wght400_GRAD0_opsz24.svg", QSize(), QIcon.Mode.Normal, QIcon.State.Off)
         self.r128DtctButton.setIcon(icon9)
         self.r128DtctButton.setIconSize(QSize(20, 35))
 
@@ -423,7 +424,7 @@ class Ui_MainWindow(object):
 "background-color:rgba(255,255,255,70);\n"
 "}")
         icon10 = QIcon()
-        icon10.addFile(u":/bl_img/icons/playlist_play_FILL0_wght400_GRAD0_opsz24.svg", QSize(), QIcon.Normal, QIcon.Off)
+        icon10.addFile(u":/bl_img/icons/playlist_play_FILL0_wght400_GRAD0_opsz24.svg", QSize(), QIcon.Mode.Normal, QIcon.State.Off)
         self.queueButton.setIcon(icon10)
         self.queueButton.setIconSize(QSize(20, 35))
 
@@ -447,7 +448,7 @@ class Ui_MainWindow(object):
 "background-color:rgba(255,255,255,70);\n"
 "}")
         icon11 = QIcon()
-        icon11.addFile(u":/bl_img/icons/call_to_action_FILL0_wght400_GRAD0_opsz24.svg", QSize(), QIcon.Normal, QIcon.Off)
+        icon11.addFile(u":/bl_img/icons/call_to_action_FILL0_wght400_GRAD0_opsz24.svg", QSize(), QIcon.Mode.Normal, QIcon.State.Off)
         self.blckDtctButton.setIcon(icon11)
         self.blckDtctButton.setIconSize(QSize(20, 35))
 
@@ -471,7 +472,7 @@ class Ui_MainWindow(object):
 "background-color:rgba(255,255,255,70);\n"
 "}")
         icon12 = QIcon()
-        icon12.addFile(u":/bl_img/icons/music_video_FILL0_wght400_GRAD0_opsz24.svg", QSize(), QIcon.Normal, QIcon.Off)
+        icon12.addFile(u":/bl_img/icons/music_video_FILL0_wght400_GRAD0_opsz24.svg", QSize(), QIcon.Mode.Normal, QIcon.State.Off)
         self.slncDtctButton.setIcon(icon12)
         self.slncDtctButton.setIconSize(QSize(20, 35))
 
@@ -495,7 +496,7 @@ class Ui_MainWindow(object):
 "background-color:rgba(255,255,255,70);\n"
 "}")
         icon13 = QIcon()
-        icon13.addFile(u":/bl_img/icons/remove_from_queue_FILL0_wght400_GRAD0_opsz24.svg", QSize(), QIcon.Normal, QIcon.Off)
+        icon13.addFile(u":/bl_img/icons/remove_from_queue_FILL0_wght400_GRAD0_opsz24.svg", QSize(), QIcon.Mode.Normal, QIcon.State.Off)
         self.frzDtctButton.setIcon(icon13)
         self.frzDtctButton.setIconSize(QSize(20, 35))
 
@@ -519,7 +520,7 @@ class Ui_MainWindow(object):
 "background-color:rgba(255,255,255,70);\n"
 "}")
         icon14 = QIcon()
-        icon14.addFile(u":/bl_img/icons/subtitles_FILL0_wght400_GRAD0_opsz24.svg", QSize(), QIcon.Normal, QIcon.Off)
+        icon14.addFile(u":/bl_img/icons/subtitles_FILL0_wght400_GRAD0_opsz24.svg", QSize(), QIcon.Mode.Normal, QIcon.State.Off)
         self.fullDtctButton.setIcon(icon14)
         self.fullDtctButton.setIconSize(QSize(20, 35))
 
@@ -547,7 +548,7 @@ class Ui_MainWindow(object):
 "background-color:rgba(255,255,255,70);\n"
 "}")
         icon15 = QIcon()
-        icon15.addFile(u":/bl_img/icons/swap_horiz_FILL0_wght400_GRAD0_opsz24.svg", QSize(), QIcon.Normal, QIcon.Off)
+        icon15.addFile(u":/bl_img/icons/swap_horiz_FILL0_wght400_GRAD0_opsz24.svg", QSize(), QIcon.Mode.Normal, QIcon.State.Off)
         self.migrateButton.setIcon(icon15)
         self.migrateButton.setIconSize(QSize(20, 35))
         self.migrateButton.setAutoRaise(False)
@@ -572,7 +573,7 @@ class Ui_MainWindow(object):
 "background-color:rgba(255,255,255,70);\n"
 "}")
         icon16 = QIcon()
-        icon16.addFile(u":/bl_img/icons/upgrade_FILL0_wght400_GRAD0_opsz24.svg", QSize(), QIcon.Normal, QIcon.Off)
+        icon16.addFile(u":/bl_img/icons/upgrade_FILL0_wght400_GRAD0_opsz24.svg", QSize(), QIcon.Mode.Normal, QIcon.State.Off)
         self.exportButton.setIcon(icon16)
         self.exportButton.setIconSize(QSize(20, 35))
         self.exportButton.setAutoRaise(False)
@@ -597,12 +598,12 @@ class Ui_MainWindow(object):
 "background-color:rgba(255,255,255,70);\n"
 "}")
         icon17 = QIcon()
-        icon17.addFile(u":/bl_img/icons/widgets_FILL0_wght400_GRAD0_opsz24.svg", QSize(), QIcon.Normal, QIcon.Off)
+        icon17.addFile(u":/bl_img/icons/widgets_FILL0_wght400_GRAD0_opsz24.svg", QSize(), QIcon.Mode.Normal, QIcon.State.Off)
         self.switchModeButton.setIcon(icon17)
         self.switchModeButton.setIconSize(QSize(20, 35))
-        self.switchModeButton.setPopupMode(QToolButton.DelayedPopup)
-        self.switchModeButton.setToolButtonStyle(Qt.ToolButtonIconOnly)
-        self.switchModeButton.setArrowType(Qt.NoArrow)
+        self.switchModeButton.setPopupMode(QToolButton.ToolButtonPopupMode.DelayedPopup)
+        self.switchModeButton.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        self.switchModeButton.setArrowType(Qt.ArrowType.NoArrow)
 
         self.verticalLayout_5.addWidget(self.switchModeButton)
 
@@ -628,7 +629,7 @@ class Ui_MainWindow(object):
 "background-color:rgba(255,255,255,70);\n"
 "}")
         icon18 = QIcon()
-        icon18.addFile(u":/bl_img/icons/settings_FILL0_wght400_GRAD0_opsz24.svg", QSize(), QIcon.Normal, QIcon.Off)
+        icon18.addFile(u":/bl_img/icons/settings_FILL0_wght400_GRAD0_opsz24.svg", QSize(), QIcon.Mode.Normal, QIcon.State.Off)
         self.settingsButton.setIcon(icon18)
         self.settingsButton.setIconSize(QSize(20, 35))
 
@@ -639,7 +640,7 @@ class Ui_MainWindow(object):
 
         self.splitter = QSplitter(self.centralwidget)
         self.splitter.setObjectName(u"splitter")
-        self.splitter.setOrientation(Qt.Horizontal)
+        self.splitter.setOrientation(Qt.Orientation.Horizontal)
         self.main_frame_tbl_01 = QFrame(self.splitter)
         self.main_frame_tbl_01.setObjectName(u"main_frame_tbl_01")
         self.verticalLayout_4 = QVBoxLayout(self.main_frame_tbl_01)
@@ -653,28 +654,28 @@ class Ui_MainWindow(object):
         self.tableWidget_01.setSizePolicy(sizePolicy)
         self.tableWidget_01.setMinimumSize(QSize(800, 400))
         self.tableWidget_01.setBaseSize(QSize(800, 320))
-        self.tableWidget_01.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.tableWidget_01.setSizeAdjustPolicy(QAbstractScrollArea.AdjustIgnored)
+        self.tableWidget_01.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tableWidget_01.setSizeAdjustPolicy(QAbstractScrollArea.SizeAdjustPolicy.AdjustIgnored)
         self.tableWidget_01.setDragEnabled(True)
         self.tableWidget_01.setDragDropOverwriteMode(False)
-        self.tableWidget_01.setDragDropMode(QAbstractItemView.NoDragDrop)
+        self.tableWidget_01.setDragDropMode(QAbstractItemView.DragDropMode.NoDragDrop)
         self.tableWidget_01.setAlternatingRowColors(False)
-        self.tableWidget_01.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.tableWidget_01.setGridStyle(Qt.SolidLine)
+        self.tableWidget_01.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.tableWidget_01.setGridStyle(Qt.PenStyle.SolidLine)
         self.tableWidget_01.setSortingEnabled(True)
         self.tableWidget_01.setColumnCount(22)
         self.tableWidget_01.horizontalHeader().setMinimumSectionSize(60)
-        self.tableWidget_01.horizontalHeader().setProperty("showSortIndicator", True)
+        self.tableWidget_01.horizontalHeader().setProperty(u"showSortIndicator", True)
         self.tableWidget_01.verticalHeader().setVisible(False)
-        self.tableWidget_01.verticalHeader().setProperty("showSortIndicator", False)
+        self.tableWidget_01.verticalHeader().setProperty(u"showSortIndicator", False)
 
         self.verticalLayout_4.addWidget(self.tableWidget_01)
 
         self.tableView_db = QTableView(self.main_frame_tbl_01)
         self.tableView_db.setObjectName(u"tableView_db")
-        self.tableView_db.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.tableView_db.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.tableView_db.setSortingEnabled(True)
-        self.tableView_db.horizontalHeader().setProperty("showSortIndicator", False)
+        self.tableView_db.horizontalHeader().setProperty(u"showSortIndicator", False)
 
         self.verticalLayout_4.addWidget(self.tableView_db)
 
@@ -684,18 +685,18 @@ class Ui_MainWindow(object):
         self.frame_wave.setStyleSheet(u"QFrame#frame_wave{\n"
 "     border: 1px solid rgb(63,64,66);\n"
 "}")
-        self.frame_wave.setFrameShape(QFrame.StyledPanel)
-        self.frame_wave.setFrameShadow(QFrame.Raised)
+        self.frame_wave.setFrameShape(QFrame.Shape.StyledPanel)
+        self.frame_wave.setFrameShadow(QFrame.Shadow.Raised)
         self.verticalLayout_2 = QVBoxLayout(self.frame_wave)
         self.verticalLayout_2.setObjectName(u"verticalLayout_2")
         self.resizeButtonDown = QToolButton(self.frame_wave)
         self.resizeButtonDown.setObjectName(u"resizeButtonDown")
         self.resizeButtonDown.setStyleSheet(u"background-color:rgba(255,255,255,0)")
         icon19 = QIcon()
-        icon19.addFile(u":/bl_img/icons/expand_more_FILL0_wght400_GRAD0_opsz24.svg", QSize(), QIcon.Normal, QIcon.Off)
+        icon19.addFile(u":/bl_img/icons/expand_more_FILL0_wght400_GRAD0_opsz24.svg", QSize(), QIcon.Mode.Normal, QIcon.State.Off)
         self.resizeButtonDown.setIcon(icon19)
 
-        self.verticalLayout_2.addWidget(self.resizeButtonDown, 0, Qt.AlignHCenter)
+        self.verticalLayout_2.addWidget(self.resizeButtonDown, 0, Qt.AlignmentFlag.AlignHCenter)
 
         self.wave_view = QLabel(self.frame_wave)
         self.wave_view.setObjectName(u"wave_view")
@@ -704,10 +705,10 @@ class Ui_MainWindow(object):
         self.wave_view.setMinimumSize(QSize(800, 320))
         self.wave_view.setMaximumSize(QSize(16777215, 500))
         self.wave_view.setBaseSize(QSize(250, 320))
-        self.wave_view.setTextFormat(Qt.AutoText)
+        self.wave_view.setTextFormat(Qt.TextFormat.AutoText)
         self.wave_view.setPixmap(QPixmap(u":/imgs/img/WaveForm_04.png"))
         self.wave_view.setScaledContents(True)
-        self.wave_view.setAlignment(Qt.AlignCenter)
+        self.wave_view.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.verticalLayout_2.addWidget(self.wave_view)
 
@@ -721,16 +722,16 @@ class Ui_MainWindow(object):
 "background-color: rgba(146, 146, 146, 146);\n"
 "margin: 4px;")
 
-        self.verticalLayout_2.addWidget(self.r128_loudness, 0, Qt.AlignHCenter)
+        self.verticalLayout_2.addWidget(self.r128_loudness, 0, Qt.AlignmentFlag.AlignHCenter)
 
         self.resizeButtonUp = QToolButton(self.frame_wave)
         self.resizeButtonUp.setObjectName(u"resizeButtonUp")
         self.resizeButtonUp.setStyleSheet(u"background-color:rgba(255,255,255,0)")
         icon20 = QIcon()
-        icon20.addFile(u":/bl_img/icons/expand_less_FILL0_wght400_GRAD0_opsz24.svg", QSize(), QIcon.Normal, QIcon.Off)
+        icon20.addFile(u":/bl_img/icons/expand_less_FILL0_wght400_GRAD0_opsz24.svg", QSize(), QIcon.Mode.Normal, QIcon.State.Off)
         self.resizeButtonUp.setIcon(icon20)
 
-        self.verticalLayout_2.addWidget(self.resizeButtonUp, 0, Qt.AlignHCenter)
+        self.verticalLayout_2.addWidget(self.resizeButtonUp, 0, Qt.AlignmentFlag.AlignHCenter)
 
 
         self.verticalLayout_4.addWidget(self.frame_wave)
@@ -745,11 +746,11 @@ class Ui_MainWindow(object):
 "	color: white;\n"
 "	border: none;\n"
 "}")
-        self.main_frame_tbl_02.setFrameShape(QFrame.StyledPanel)
-        self.main_frame_tbl_02.setFrameShadow(QFrame.Raised)
+        self.main_frame_tbl_02.setFrameShape(QFrame.Shape.StyledPanel)
+        self.main_frame_tbl_02.setFrameShadow(QFrame.Shadow.Raised)
         self.verticalLayout = QVBoxLayout(self.main_frame_tbl_02)
         self.verticalLayout.setObjectName(u"verticalLayout")
-        self.verticalLayout.setSizeConstraint(QLayout.SetMaximumSize)
+        self.verticalLayout.setSizeConstraint(QLayout.SizeConstraint.SetMaximumSize)
         self.verticalLayout.setContentsMargins(0, 1, 0, 0)
         self.frame_tags = QFrame(self.main_frame_tbl_02)
         self.frame_tags.setObjectName(u"frame_tags")
@@ -758,7 +759,7 @@ class Ui_MainWindow(object):
 "}")
         self.gridLayout_2 = QGridLayout(self.frame_tags)
         self.gridLayout_2.setObjectName(u"gridLayout_2")
-        self.gridLayout_2.setSizeConstraint(QLayout.SetMaximumSize)
+        self.gridLayout_2.setSizeConstraint(QLayout.SizeConstraint.SetMaximumSize)
         self.gridLayout_2.setHorizontalSpacing(6)
         self.gridLayout_2.setVerticalSpacing(2)
         self.gridLayout_2.setContentsMargins(6, 6, 6, 6)
@@ -799,7 +800,7 @@ class Ui_MainWindow(object):
         self.tag_file_path.setStyleSheet(u"color: rgb(146, 146, 146)")
         self.tag_file_path.setWordWrap(True)
 
-        self.gridLayout_2.addWidget(self.tag_file_path, 1, 0, 1, 5, Qt.AlignTop)
+        self.gridLayout_2.addWidget(self.tag_file_path, 1, 0, 1, 5, Qt.AlignmentFlag.AlignTop)
 
         self.tag_a1_codec_name = QLabel(self.frame_tags)
         self.tag_a1_codec_name.setObjectName(u"tag_a1_codec_name")
@@ -835,7 +836,7 @@ class Ui_MainWindow(object):
         self.tag_duration.setObjectName(u"tag_duration")
         self.tag_duration.setStyleSheet(u"color: white")
 
-        self.gridLayout_2.addWidget(self.tag_duration, 0, 4, 1, 1, Qt.AlignRight|Qt.AlignTop)
+        self.gridLayout_2.addWidget(self.tag_duration, 0, 4, 1, 1, Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignTop)
 
         self.tag_s2_language = QLabel(self.frame_tags)
         self.tag_s2_language.setObjectName(u"tag_s2_language")
@@ -913,7 +914,7 @@ class Ui_MainWindow(object):
 "}")
         self.verticalLayout_3 = QVBoxLayout(self.frame_tbl_02)
         self.verticalLayout_3.setObjectName(u"verticalLayout_3")
-        self.verticalLayout_3.setSizeConstraint(QLayout.SetMaximumSize)
+        self.verticalLayout_3.setSizeConstraint(QLayout.SizeConstraint.SetMaximumSize)
         self.verticalLayout_3.setContentsMargins(6, 6, 6, 6)
         self.label_8 = QLabel(self.frame_tbl_02)
         self.label_8.setObjectName(u"label_8")
@@ -930,9 +931,9 @@ class Ui_MainWindow(object):
         self.tableWidget_02.setHorizontalHeaderItem(1, __qtablewidgetitem1)
         self.tableWidget_02.setObjectName(u"tableWidget_02")
         self.tableWidget_02.setStyleSheet(u"border: 0px")
-        self.tableWidget_02.setSelectionMode(QAbstractItemView.NoSelection)
+        self.tableWidget_02.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.tableWidget_02.setShowGrid(False)
-        self.tableWidget_02.setGridStyle(Qt.CustomDashLine)
+        self.tableWidget_02.setGridStyle(Qt.PenStyle.CustomDashLine)
         self.tableWidget_02.setCornerButtonEnabled(False)
         self.tableWidget_02.horizontalHeader().setVisible(False)
         self.tableWidget_02.horizontalHeader().setMinimumSectionSize(40)
@@ -950,9 +951,9 @@ class Ui_MainWindow(object):
         MainWindow.setCentralWidget(self.centralwidget)
         self.menuBar = QMenuBar(MainWindow)
         self.menuBar.setObjectName(u"menuBar")
-        self.menuBar.setGeometry(QRect(0, 0, 1500, 31))
+        self.menuBar.setGeometry(QRect(0, 0, 1500, 41))
         self.menuBar.setMinimumSize(QSize(0, 25))
-        self.menuBar.setLayoutDirection(Qt.LeftToRight)
+        self.menuBar.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
         self.menuBar.setAutoFillBackground(False)
         self.menuBar.setStyleSheet(u"QMenuBar{\n"
 "	 color: rgb(146, 146, 146);\n"
@@ -999,9 +1000,9 @@ class Ui_MainWindow(object):
         self.toolBar.setObjectName(u"toolBar")
         self.toolBar.setStyleSheet(u"")
         self.toolBar.setMovable(False)
-        self.toolBar.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        self.toolBar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         self.toolBar.setFloatable(True)
-        MainWindow.addToolBar(Qt.TopToolBarArea, self.toolBar)
+        MainWindow.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.toolBar)
 
         self.menuBar.addAction(self.menuFile.menuAction())
         self.menuBar.addAction(self.menuEdit.menuAction())

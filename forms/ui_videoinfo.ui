@@ -14,7 +14,7 @@
    <string>VideoINFO</string>
   </property>
   <property name="windowIcon">
-   <iconset resource="../icons.qrc">
+   <iconset resource="../resources/icons.qrc">
     <normaloff>:/logo/logo/LOGO_VideoInfo_450x450.png</normaloff>:/logo/logo/LOGO_VideoInfo_450x450.png</iconset>
   </property>
   <property name="styleSheet">
@@ -54,10 +54,10 @@ font-family: Noto Sans;</string>
 border: 0px;</string>
       </property>
       <property name="frameShape">
-       <enum>QFrame::Box</enum>
+       <enum>QFrame::Shape::Box</enum>
       </property>
       <property name="frameShadow">
-       <enum>QFrame::Raised</enum>
+       <enum>QFrame::Shadow::Raised</enum>
       </property>
       <layout class="QVBoxLayout" name="verticalLayout_5">
        <property name="leftMargin">
@@ -116,7 +116,7 @@ background-color:rgba(255,255,255,70);
           <string/>
          </property>
          <property name="icon">
-          <iconset resource="../icons.qrc">
+          <iconset resource="../resources/icons.qrc">
            <normaloff>:/bl_img/icons/menu_FILL0_wght400_GRAD0_opsz24.svg</normaloff>:/bl_img/icons/menu_FILL0_wght400_GRAD0_opsz24.svg</iconset>
          </property>
          <property name="iconSize">
@@ -126,23 +126,23 @@ background-color:rgba(255,255,255,70);
           </size>
          </property>
          <property name="popupMode">
-          <enum>QToolButton::DelayedPopup</enum>
+          <enum>QToolButton::ToolButtonPopupMode::DelayedPopup</enum>
          </property>
          <property name="toolButtonStyle">
-          <enum>Qt::ToolButtonIconOnly</enum>
+          <enum>Qt::ToolButtonStyle::ToolButtonIconOnly</enum>
          </property>
          <property name="arrowType">
-          <enum>Qt::NoArrow</enum>
+          <enum>Qt::ArrowType::NoArrow</enum>
          </property>
         </widget>
        </item>
        <item>
         <spacer name="verticalSpacer_2">
          <property name="orientation">
-          <enum>Qt::Vertical</enum>
+          <enum>Qt::Orientation::Vertical</enum>
          </property>
          <property name="sizeType">
-          <enum>QSizePolicy::Minimum</enum>
+          <enum>QSizePolicy::Policy::Minimum</enum>
          </property>
          <property name="sizeHint" stdset="0">
           <size>
@@ -193,7 +193,7 @@ background-color:rgba(255,255,255,70);
           <string>Open</string>
          </property>
          <property name="icon">
-          <iconset resource="../icons.qrc">
+          <iconset resource="../resources/icons.qrc">
            <normaloff>:/bl_img/icons/list_alt_add_FILL0_wght400_GRAD0_opsz24.svg</normaloff>:/bl_img/icons/list_alt_add_FILL0_wght400_GRAD0_opsz24.svg</iconset>
          </property>
          <property name="iconSize">
@@ -203,7 +203,7 @@ background-color:rgba(255,255,255,70);
           </size>
          </property>
          <property name="toolButtonStyle">
-          <enum>Qt::ToolButtonIconOnly</enum>
+          <enum>Qt::ToolButtonStyle::ToolButtonIconOnly</enum>
          </property>
         </widget>
        </item>
@@ -248,7 +248,7 @@ background-color:rgba(255,255,255,70);
           <string>Open</string>
          </property>
          <property name="icon">
-          <iconset resource="../icons.qrc">
+          <iconset resource="../resources/icons.qrc">
            <normaloff>:/bl_img/icons/scan_delete_FILL0_wght400_GRAD0_opsz24.svg</normaloff>:/bl_img/icons/scan_delete_FILL0_wght400_GRAD0_opsz24.svg</iconset>
          </property>
          <property name="iconSize">
@@ -258,7 +258,7 @@ background-color:rgba(255,255,255,70);
           </size>
          </property>
          <property name="toolButtonStyle">
-          <enum>Qt::ToolButtonIconOnly</enum>
+          <enum>Qt::ToolButtonStyle::ToolButtonIconOnly</enum>
          </property>
         </widget>
        </item>
@@ -303,7 +303,7 @@ background-color:rgba(255,255,255,70);
           <string>Open</string>
          </property>
          <property name="icon">
-          <iconset resource="../icons.qrc">
+          <iconset resource="../resources/icons.qrc">
            <normaloff>:/bl_img/icons/move_group_FILL0_wght400_GRAD0_opsz24.svg</normaloff>:/bl_img/icons/move_group_FILL0_wght400_GRAD0_opsz24.svg</iconset>
          </property>
          <property name="iconSize">
@@ -313,7 +313,7 @@ background-color:rgba(255,255,255,70);
           </size>
          </property>
          <property name="toolButtonStyle">
-          <enum>Qt::ToolButtonIconOnly</enum>
+          <enum>Qt::ToolButtonStyle::ToolButtonIconOnly</enum>
          </property>
         </widget>
        </item>
@@ -344,7 +344,7 @@ background-color:rgba(255,255,255,70);
           </size>
          </property>
          <property name="contextMenuPolicy">
-          <enum>Qt::DefaultContextMenu</enum>
+          <enum>Qt::ContextMenuPolicy::DefaultContextMenu</enum>
          </property>
          <property name="toolTip">
           <string>Добавить файл</string>
@@ -370,7 +370,7 @@ background-color:rgba(255,255,255,70);
           <string>Add</string>
          </property>
          <property name="icon">
-          <iconset resource="../icons.qrc">
+          <iconset resource="../resources/icons.qrc">
            <normaloff>:/bl_img/icons/add_FILL0_wght400_GRAD0_opsz24.svg</normaloff>:/bl_img/icons/add_FILL0_wght400_GRAD0_opsz24.svg</iconset>
          </property>
          <property name="iconSize">
@@ -380,7 +380,7 @@ background-color:rgba(255,255,255,70);
           </size>
          </property>
          <property name="toolButtonStyle">
-          <enum>Qt::ToolButtonIconOnly</enum>
+          <enum>Qt::ToolButtonStyle::ToolButtonIconOnly</enum>
          </property>
         </widget>
        </item>
@@ -425,7 +425,7 @@ background-color:rgba(255,255,255,70);
           <string>Del</string>
          </property>
          <property name="icon">
-          <iconset resource="../icons.qrc">
+          <iconset resource="../resources/icons.qrc">
            <normaloff>:/bl_img/icons/remove_FILL0_wght400_GRAD0_opsz24.svg</normaloff>:/bl_img/icons/remove_FILL0_wght400_GRAD0_opsz24.svg</iconset>
          </property>
          <property name="iconSize">
@@ -477,7 +477,7 @@ background-color:rgba(255,255,255,70);
           <string>Play</string>
          </property>
          <property name="icon">
-          <iconset resource="../icons.qrc">
+          <iconset resource="../resources/icons.qrc">
            <normaloff>:/bl_img/icons/play_arrow_FILL0_wght400_GRAD0_opsz24.svg</normaloff>:/bl_img/icons/play_arrow_FILL0_wght400_GRAD0_opsz24.svg</iconset>
          </property>
          <property name="iconSize">
@@ -529,7 +529,7 @@ background-color:rgba(255,255,255,70);
           <string>Open</string>
          </property>
          <property name="icon">
-          <iconset resource="../icons.qrc">
+          <iconset resource="../resources/icons.qrc">
            <normaloff>:/bl_img/icons/folder_open_FILL0_wght400_GRAD0_opsz24.svg</normaloff>:/bl_img/icons/folder_open_FILL0_wght400_GRAD0_opsz24.svg</iconset>
          </property>
          <property name="iconSize">
@@ -539,17 +539,17 @@ background-color:rgba(255,255,255,70);
           </size>
          </property>
          <property name="toolButtonStyle">
-          <enum>Qt::ToolButtonIconOnly</enum>
+          <enum>Qt::ToolButtonStyle::ToolButtonIconOnly</enum>
          </property>
         </widget>
        </item>
        <item>
         <spacer name="verticalSpacer_3">
          <property name="orientation">
-          <enum>Qt::Vertical</enum>
+          <enum>Qt::Orientation::Vertical</enum>
          </property>
          <property name="sizeType">
-          <enum>QSizePolicy::Minimum</enum>
+          <enum>QSizePolicy::Policy::Minimum</enum>
          </property>
          <property name="sizeHint" stdset="0">
           <size>
@@ -600,7 +600,7 @@ background-color:rgba(255,255,255,70);
           <string>Wave</string>
          </property>
          <property name="icon">
-          <iconset resource="../icons.qrc">
+          <iconset resource="../resources/icons.qrc">
            <normaloff>:/bl_img/icons/equalizer_FILL0_wght400_GRAD0_opsz24.svg</normaloff>:/bl_img/icons/equalizer_FILL0_wght400_GRAD0_opsz24.svg</iconset>
          </property>
          <property name="iconSize">
@@ -649,7 +649,7 @@ background-color:rgba(255,255,255,70);
           <string>Wave</string>
          </property>
          <property name="icon">
-          <iconset resource="../icons.qrc">
+          <iconset resource="../resources/icons.qrc">
            <normaloff>:/bl_img/icons/playlist_play_FILL0_wght400_GRAD0_opsz24.svg</normaloff>:/bl_img/icons/playlist_play_FILL0_wght400_GRAD0_opsz24.svg</iconset>
          </property>
          <property name="iconSize">
@@ -701,7 +701,7 @@ background-color:rgba(255,255,255,70);
           <string>Wave</string>
          </property>
          <property name="icon">
-          <iconset resource="../icons.qrc">
+          <iconset resource="../resources/icons.qrc">
            <normaloff>:/bl_img/icons/call_to_action_FILL0_wght400_GRAD0_opsz24.svg</normaloff>:/bl_img/icons/call_to_action_FILL0_wght400_GRAD0_opsz24.svg</iconset>
          </property>
          <property name="iconSize">
@@ -753,7 +753,7 @@ background-color:rgba(255,255,255,70);
           <string>Wave</string>
          </property>
          <property name="icon">
-          <iconset resource="../icons.qrc">
+          <iconset resource="../resources/icons.qrc">
            <normaloff>:/bl_img/icons/music_video_FILL0_wght400_GRAD0_opsz24.svg</normaloff>:/bl_img/icons/music_video_FILL0_wght400_GRAD0_opsz24.svg</iconset>
          </property>
          <property name="iconSize">
@@ -805,7 +805,7 @@ background-color:rgba(255,255,255,70);
           <string>Wave</string>
          </property>
          <property name="icon">
-          <iconset resource="../icons.qrc">
+          <iconset resource="../resources/icons.qrc">
            <normaloff>:/bl_img/icons/remove_from_queue_FILL0_wght400_GRAD0_opsz24.svg</normaloff>:/bl_img/icons/remove_from_queue_FILL0_wght400_GRAD0_opsz24.svg</iconset>
          </property>
          <property name="iconSize">
@@ -857,7 +857,7 @@ background-color:rgba(255,255,255,70);
           <string>Wave</string>
          </property>
          <property name="icon">
-          <iconset resource="../icons.qrc">
+          <iconset resource="../resources/icons.qrc">
            <normaloff>:/bl_img/icons/subtitles_FILL0_wght400_GRAD0_opsz24.svg</normaloff>:/bl_img/icons/subtitles_FILL0_wght400_GRAD0_opsz24.svg</iconset>
          </property>
          <property name="iconSize">
@@ -871,10 +871,10 @@ background-color:rgba(255,255,255,70);
        <item>
         <spacer name="verticalSpacer_4">
          <property name="orientation">
-          <enum>Qt::Vertical</enum>
+          <enum>Qt::Orientation::Vertical</enum>
          </property>
          <property name="sizeType">
-          <enum>QSizePolicy::Minimum</enum>
+          <enum>QSizePolicy::Policy::Minimum</enum>
          </property>
          <property name="sizeHint" stdset="0">
           <size>
@@ -922,7 +922,7 @@ background-color:rgba(255,255,255,70);
           <string>Copy/Rename</string>
          </property>
          <property name="icon">
-          <iconset resource="../icons.qrc">
+          <iconset resource="../resources/icons.qrc">
            <normaloff>:/bl_img/icons/swap_horiz_FILL0_wght400_GRAD0_opsz24.svg</normaloff>:/bl_img/icons/swap_horiz_FILL0_wght400_GRAD0_opsz24.svg</iconset>
          </property>
          <property name="iconSize">
@@ -977,7 +977,7 @@ background-color:rgba(255,255,255,70);
           <string>Export</string>
          </property>
          <property name="icon">
-          <iconset resource="../icons.qrc">
+          <iconset resource="../resources/icons.qrc">
            <normaloff>:/bl_img/icons/upgrade_FILL0_wght400_GRAD0_opsz24.svg</normaloff>:/bl_img/icons/upgrade_FILL0_wght400_GRAD0_opsz24.svg</iconset>
          </property>
          <property name="iconSize">
@@ -1035,7 +1035,7 @@ background-color:rgba(255,255,255,70);
           <string>Add</string>
          </property>
          <property name="icon">
-          <iconset resource="../icons.qrc">
+          <iconset resource="../resources/icons.qrc">
            <normaloff>:/bl_img/icons/widgets_FILL0_wght400_GRAD0_opsz24.svg</normaloff>:/bl_img/icons/widgets_FILL0_wght400_GRAD0_opsz24.svg</iconset>
          </property>
          <property name="iconSize">
@@ -1045,20 +1045,20 @@ background-color:rgba(255,255,255,70);
           </size>
          </property>
          <property name="popupMode">
-          <enum>QToolButton::DelayedPopup</enum>
+          <enum>QToolButton::ToolButtonPopupMode::DelayedPopup</enum>
          </property>
          <property name="toolButtonStyle">
-          <enum>Qt::ToolButtonIconOnly</enum>
+          <enum>Qt::ToolButtonStyle::ToolButtonIconOnly</enum>
          </property>
          <property name="arrowType">
-          <enum>Qt::NoArrow</enum>
+          <enum>Qt::ArrowType::NoArrow</enum>
          </property>
         </widget>
        </item>
        <item>
         <spacer name="verticalSpacer">
          <property name="orientation">
-          <enum>Qt::Vertical</enum>
+          <enum>Qt::Orientation::Vertical</enum>
          </property>
          <property name="sizeHint" stdset="0">
           <size>
@@ -1109,7 +1109,7 @@ background-color:rgba(255,255,255,70);
           <string>Export</string>
          </property>
          <property name="icon">
-          <iconset resource="../icons.qrc">
+          <iconset resource="../resources/icons.qrc">
            <normaloff>:/bl_img/icons/settings_FILL0_wght400_GRAD0_opsz24.svg</normaloff>:/bl_img/icons/settings_FILL0_wght400_GRAD0_opsz24.svg</iconset>
          </property>
          <property name="iconSize">
@@ -1126,7 +1126,7 @@ background-color:rgba(255,255,255,70);
     <item row="0" column="1">
      <widget class="QSplitter" name="splitter">
       <property name="orientation">
-       <enum>Qt::Horizontal</enum>
+       <enum>Qt::Orientation::Horizontal</enum>
       </property>
       <widget class="QFrame" name="main_frame_tbl_01">
        <layout class="QVBoxLayout" name="verticalLayout_4">
@@ -1163,10 +1163,10 @@ background-color:rgba(255,255,255,70);
            </size>
           </property>
           <property name="contextMenuPolicy">
-           <enum>Qt::CustomContextMenu</enum>
+           <enum>Qt::ContextMenuPolicy::CustomContextMenu</enum>
           </property>
           <property name="sizeAdjustPolicy">
-           <enum>QAbstractScrollArea::AdjustIgnored</enum>
+           <enum>QAbstractScrollArea::SizeAdjustPolicy::AdjustIgnored</enum>
           </property>
           <property name="dragEnabled">
            <bool>true</bool>
@@ -1175,16 +1175,16 @@ background-color:rgba(255,255,255,70);
            <bool>false</bool>
           </property>
           <property name="dragDropMode">
-           <enum>QAbstractItemView::NoDragDrop</enum>
+           <enum>QAbstractItemView::DragDropMode::NoDragDrop</enum>
           </property>
           <property name="alternatingRowColors">
            <bool>false</bool>
           </property>
           <property name="selectionBehavior">
-           <enum>QAbstractItemView::SelectRows</enum>
+           <enum>QAbstractItemView::SelectionBehavior::SelectRows</enum>
           </property>
           <property name="gridStyle">
-           <enum>Qt::SolidLine</enum>
+           <enum>Qt::PenStyle::SolidLine</enum>
           </property>
           <property name="sortingEnabled">
            <bool>true</bool>
@@ -1231,7 +1231,7 @@ background-color:rgba(255,255,255,70);
         <item>
          <widget class="QTableView" name="tableView_db">
           <property name="selectionBehavior">
-           <enum>QAbstractItemView::SelectRows</enum>
+           <enum>QAbstractItemView::SelectionBehavior::SelectRows</enum>
           </property>
           <property name="sortingEnabled">
            <bool>true</bool>
@@ -1255,13 +1255,13 @@ background-color:rgba(255,255,255,70);
 }</string>
           </property>
           <property name="frameShape">
-           <enum>QFrame::StyledPanel</enum>
+           <enum>QFrame::Shape::StyledPanel</enum>
           </property>
           <property name="frameShadow">
-           <enum>QFrame::Raised</enum>
+           <enum>QFrame::Shadow::Raised</enum>
           </property>
           <layout class="QVBoxLayout" name="verticalLayout_2">
-           <item alignment="Qt::AlignHCenter">
+           <item alignment="Qt::AlignmentFlag::AlignHCenter">
             <widget class="QToolButton" name="resizeButtonDown">
              <property name="styleSheet">
               <string notr="true">background-color:rgba(255,255,255,0)</string>
@@ -1270,7 +1270,7 @@ background-color:rgba(255,255,255,70);
               <string/>
              </property>
              <property name="icon">
-              <iconset resource="../icons.qrc">
+              <iconset resource="../resources/icons.qrc">
                <normaloff>:/bl_img/icons/expand_more_FILL0_wght400_GRAD0_opsz24.svg</normaloff>:/bl_img/icons/expand_more_FILL0_wght400_GRAD0_opsz24.svg</iconset>
              </property>
             </widget>
@@ -1305,20 +1305,20 @@ background-color:rgba(255,255,255,70);
               <string/>
              </property>
              <property name="textFormat">
-              <enum>Qt::AutoText</enum>
+              <enum>Qt::TextFormat::AutoText</enum>
              </property>
              <property name="pixmap">
-              <pixmap resource="../icons.qrc">:/imgs/img/WaveForm_04.png</pixmap>
+              <pixmap>:/imgs/img/WaveForm_04.png</pixmap>
              </property>
              <property name="scaledContents">
               <bool>true</bool>
              </property>
              <property name="alignment">
-              <set>Qt::AlignCenter</set>
+              <set>Qt::AlignmentFlag::AlignCenter</set>
              </property>
             </widget>
            </item>
-           <item alignment="Qt::AlignHCenter">
+           <item alignment="Qt::AlignmentFlag::AlignHCenter">
             <widget class="QLabel" name="r128_loudness">
              <property name="font">
               <font>
@@ -1336,7 +1336,7 @@ margin: 4px;</string>
              </property>
             </widget>
            </item>
-           <item alignment="Qt::AlignHCenter">
+           <item alignment="Qt::AlignmentFlag::AlignHCenter">
             <widget class="QToolButton" name="resizeButtonUp">
              <property name="styleSheet">
               <string notr="true">background-color:rgba(255,255,255,0)</string>
@@ -1345,7 +1345,7 @@ margin: 4px;</string>
               <string>switch</string>
              </property>
              <property name="icon">
-              <iconset resource="../icons.qrc">
+              <iconset resource="../resources/icons.qrc">
                <normaloff>:/bl_img/icons/expand_less_FILL0_wght400_GRAD0_opsz24.svg</normaloff>:/bl_img/icons/expand_less_FILL0_wght400_GRAD0_opsz24.svg</iconset>
              </property>
             </widget>
@@ -1381,14 +1381,14 @@ margin: 4px;</string>
 }</string>
        </property>
        <property name="frameShape">
-        <enum>QFrame::StyledPanel</enum>
+        <enum>QFrame::Shape::StyledPanel</enum>
        </property>
        <property name="frameShadow">
-        <enum>QFrame::Raised</enum>
+        <enum>QFrame::Shadow::Raised</enum>
        </property>
        <layout class="QVBoxLayout" name="verticalLayout">
         <property name="sizeConstraint">
-         <enum>QLayout::SetMaximumSize</enum>
+         <enum>QLayout::SizeConstraint::SetMaximumSize</enum>
         </property>
         <property name="leftMargin">
          <number>0</number>
@@ -1411,7 +1411,7 @@ margin: 4px;</string>
           </property>
           <layout class="QGridLayout" name="gridLayout_2" columnstretch="0,1,2,2,2">
            <property name="sizeConstraint">
-            <enum>QLayout::SetMaximumSize</enum>
+            <enum>QLayout::SizeConstraint::SetMaximumSize</enum>
            </property>
            <property name="leftMargin">
             <number>6</number>
@@ -1481,7 +1481,7 @@ margin: 4px;</string>
              </property>
             </widget>
            </item>
-           <item row="1" column="0" colspan="5" alignment="Qt::AlignTop">
+           <item row="1" column="0" colspan="5" alignment="Qt::AlignmentFlag::AlignTop">
             <widget class="QLabel" name="tag_file_path">
              <property name="sizePolicy">
               <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
@@ -1550,7 +1550,7 @@ margin: 4px;</string>
              </property>
             </widget>
            </item>
-           <item row="0" column="4" alignment="Qt::AlignRight|Qt::AlignTop">
+           <item row="0" column="4" alignment="Qt::AlignmentFlag::AlignRight|Qt::AlignmentFlag::AlignTop">
             <widget class="QLabel" name="tag_duration">
              <property name="styleSheet">
               <string notr="true">color: white</string>
@@ -1676,7 +1676,7 @@ margin: 4px;</string>
           </property>
           <layout class="QVBoxLayout" name="verticalLayout_3">
            <property name="sizeConstraint">
-            <enum>QLayout::SetMaximumSize</enum>
+            <enum>QLayout::SizeConstraint::SetMaximumSize</enum>
            </property>
            <property name="leftMargin">
             <number>6</number>
@@ -1706,13 +1706,13 @@ margin: 4px;</string>
               <string notr="true">border: 0px</string>
              </property>
              <property name="selectionMode">
-              <enum>QAbstractItemView::NoSelection</enum>
+              <enum>QAbstractItemView::SelectionMode::NoSelection</enum>
              </property>
              <property name="showGrid">
               <bool>false</bool>
              </property>
              <property name="gridStyle">
-              <enum>Qt::CustomDashLine</enum>
+              <enum>Qt::PenStyle::CustomDashLine</enum>
              </property>
              <property name="cornerButtonEnabled">
               <bool>false</bool>
@@ -1753,7 +1753,7 @@ margin: 4px;</string>
      <x>0</x>
      <y>0</y>
      <width>1500</width>
-     <height>31</height>
+     <height>41</height>
     </rect>
    </property>
    <property name="minimumSize">
@@ -1763,7 +1763,7 @@ margin: 4px;</string>
     </size>
    </property>
    <property name="layoutDirection">
-    <enum>Qt::LeftToRight</enum>
+    <enum>Qt::LayoutDirection::LeftToRight</enum>
    </property>
    <property name="autoFillBackground">
     <bool>false</bool>
@@ -1948,7 +1948,7 @@ background-color:rgba(255,255,255,70);
     <bool>false</bool>
    </property>
    <property name="toolButtonStyle">
-    <enum>Qt::ToolButtonIconOnly</enum>
+    <enum>Qt::ToolButtonStyle::ToolButtonIconOnly</enum>
    </property>
    <property name="floatable">
     <bool>true</bool>
@@ -1968,7 +1968,7 @@ background-color:rgba(255,255,255,70);
     <string>Ctrl+O</string>
    </property>
    <property name="menuRole">
-    <enum>QAction::TextHeuristicRole</enum>
+    <enum>QAction::MenuRole::TextHeuristicRole</enum>
    </property>
   </action>
   <action name="actionDelete_selected_file">
@@ -2274,7 +2274,7 @@ background-color:rgba(255,255,255,70);
   </action>
  </widget>
  <resources>
-  <include location="../icons.qrc"/>
+  <include location="../resources/icons.qrc"/>
  </resources>
  <connections/>
 </ui>

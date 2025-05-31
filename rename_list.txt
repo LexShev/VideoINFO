@@ -1,1 +1,0 @@
-['C:/Users/Алексей/Videos/BlackDetectTest.mp4', 'C:/Users/Алексей/Videos/BlackDetectTest_TC.mp4'], ['C:/Users/Алексей/Videos/BlackDetectTest_123.mp4', 'C:/Users/Алексей/Videos/BlackDetectTest_TC_123.mp4']
