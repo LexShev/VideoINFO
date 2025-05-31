@@ -22,7 +22,6 @@ os.makedirs(SQLITE_DIR, exist_ok=True)
 os.makedirs(WAVE_DIR, exist_ok=True)
 
 
-
 class Settings(QWidget):
     def __init__(self):
         super().__init__()
