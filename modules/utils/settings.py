@@ -16,6 +16,9 @@ SET_NAME = os.path.join(SET_DIR, 'settings.ini')
 SQLITE_DIR = os.path.join(BASE_DIR, 'db')
 LOG_PATH = os.path.join(BASE_DIR, 'logs', 'rename_list.txt')
 WAVE_DIR = os.path.join(BASE_DIR, 'waveforms')
+FFPROBE_DIR = os.path.join(BASE_DIR, r'ffmpeg\bin\ffprobe.exe')
+FFMPEG_DIR = os.path.join(BASE_DIR, r'ffmpeg\bin\ffmpeg.exe')
+
 
 os.makedirs(SET_DIR, exist_ok=True)
 os.makedirs(SQLITE_DIR, exist_ok=True)

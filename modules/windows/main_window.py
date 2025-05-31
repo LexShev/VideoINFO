@@ -402,8 +402,8 @@ class VideoInfo(QMainWindow):
         self.file_manager.move_from_dbButton.clicked.connect(self.file_list_move_from)
 
         # START PROGRAM
-        self.db_connect()
-        self.create_db_table()
+        # self.db_connect()
+        # self.create_db_table()
 
     def init_table_widget(self):
         self.ui.tableWidget_01.keyPressEvent = self.table_key_press_event
