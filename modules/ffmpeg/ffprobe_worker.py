@@ -90,6 +90,7 @@ class FFprobeScan(QRunnable):
             stderr=subprocess.STDOUT,
             universal_newlines=True,
             encoding='utf-8',
+            errors='replace',
             bufsize=1,
             creationflags=subprocess.CREATE_NO_WINDOW,
             shell=False
@@ -163,8 +164,7 @@ class R128Scan(QRunnable):
                 "-hide_banner",
                 "-loglevel", "info",
                 '-y',
-                "-i",
-                self.file_path,
+                "-i", f"{self.file_path}",
                 "-af",
                 f"loudnorm=I={self.r128_i}:LRA={self.r128_lra}:TP={self.r128_tp}:print_format=json",
                 "-f",
@@ -177,6 +177,7 @@ class R128Scan(QRunnable):
                 stderr=subprocess.STDOUT,
                 universal_newlines=True,
                 encoding='utf-8',
+                errors='replace',
                 bufsize=1,
                 creationflags=subprocess.CREATE_NO_WINDOW,
                 shell=False
@@ -229,14 +230,14 @@ class R128Scan(QRunnable):
             "-hide_banner",
             "-loglevel", "info",
             '-y',
-            "-i", self.file_path,
+            "-i", f"{self.file_path}",
             "-filter_complex", "showwavespic=s=2000x800:scale=cbrt:draw=full",
             "-frames:v", '1',
             image_file
         ]
         output = subprocess.check_output(
             command, stderr=subprocess.STDOUT, universal_newlines=True, encoding='utf-8',
-            creationflags=subprocess.CREATE_NO_WINDOW, shell=False
+            errors='replace', creationflags=subprocess.CREATE_NO_WINDOW, shell=False
         )
         self.mongo.update_file_info(self.file_path, {'waveforms': True})
 
@@ -297,8 +298,7 @@ class BlackDetect(QRunnable):
             command = [
                 f"{FFMPEG_DIR}",
                 '-y',
-                "-i",
-                self.file_path,
+                "-i", f"{self.file_path}",
                 '-ss', self.blck_tc_in,
                 '-to', self.blck_tc_out,
                 '-vf', f"blackdetect=d={self.blck_dur}:pix_th={self.blck_thr}:pic_th=0.93",
@@ -306,15 +306,17 @@ class BlackDetect(QRunnable):
                 '-f', 'null',
                 '-'
                 ]
-            output = subprocess.Popen(command,
+            output = subprocess.Popen(
+                command,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 universal_newlines=True,
                 encoding='utf-8',
+                errors='replace',
                 bufsize=1,
                 creationflags=subprocess.CREATE_NO_WINDOW,
                 shell=False
-                  )
+            )
 
 
             black_detect_list = []
@@ -419,8 +421,7 @@ class SilenceDetect(QRunnable):
             command = [
                 f"{FFMPEG_DIR}",
                 '-y',
-                "-i",
-                self.file_path,
+                "-i", f"{self.file_path}",
                 '-ss', self.slnc_tc_in,
                 '-to', self.slnc_tc_out,
                 '-af', f"silencedetect=n={self.slnc_noize}dB:d={self.slnc_dur}:noise=-45dB",
@@ -434,6 +435,7 @@ class SilenceDetect(QRunnable):
                 stderr=subprocess.STDOUT,
                 universal_newlines=True,
                 encoding='utf-8',
+                errors='replace',
                 bufsize=1,
                 creationflags=subprocess.CREATE_NO_WINDOW,
                 shell=False
@@ -551,8 +553,7 @@ class FreezeDetect(QRunnable):
             command = [
                 f"{FFMPEG_DIR}",
                 '-y',
-                "-i",
-                self.file_path,
+                "-i", f"{self.file_path}",
                 '-ss', self.frz_tc_in,
                 '-to', self.frz_tc_out,
                 '-vf', f"freezedetect=n={self.frz_noize}dB:d={self.frz_dur}",
@@ -560,15 +561,17 @@ class FreezeDetect(QRunnable):
                 '-'
                 ]
             print(command)
-            output = subprocess.Popen(command,
+            output = subprocess.Popen(
+                command,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 universal_newlines=True,
                 encoding='utf-8',
+                errors='replace',
                 bufsize=1,
                 creationflags=subprocess.CREATE_NO_WINDOW,
                 shell=False
-                  )
+            )
 
             freeze_detect_list = []
             current_triple = {}

@@ -31,7 +31,7 @@ class Ui_MainWindow(object):
             MainWindow.setObjectName(u"MainWindow")
         MainWindow.resize(1500, 924)
         icon = QIcon()
-        icon.addFile(u":/logo/logo/LOGO_VideoInfo_450x450.png", QSize(), QIcon.Mode.Normal, QIcon.State.Off)
+        icon.addFile("resources/logo/LOGO.png", QSize(), QIcon.Mode.Normal, QIcon.State.Off)
         MainWindow.setWindowIcon(icon)
         MainWindow.setStyleSheet(u"background-color: rgb(40, 40, 45);\n"
 "font-family: Noto Sans;")

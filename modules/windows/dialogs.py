@@ -43,33 +43,33 @@ class DoubleProgressDialog(QDialog):
             "QPushButton:pressed{background-color:rgba(255,255,255,70);}"
         )
 
-        # Создаем layout
+        # РЎРѕР·РґР°РµРј layout
         layout = QVBoxLayout(self)
 
-        # Первый прогрессбар с меткой
+        # РџРµСЂРІС‹Р№ РїСЂРѕРіСЂРµСЃСЃР±Р°СЂ СЃ РјРµС‚РєРѕР№
         self.label_01 = QLabel("Current task:")
         self.label_01.setAlignment(Qt.AlignCenter)
         self.progress_01 = QProgressBar()
 
-        # Второй прогрессбар с меткой
+        # Р’С‚РѕСЂРѕР№ РїСЂРѕРіСЂРµСЃСЃР±Р°СЂ СЃ РјРµС‚РєРѕР№
         self.label_02 = QLabel("Total progress:")
         self.label_02.setAlignment(Qt.AlignCenter)
         self.progress_02 = QProgressBar()
 
-        # Кнопка отмены
+        # РљРЅРѕРїРєР° РѕС‚РјРµРЅС‹
         self.cancel_button = QPushButton("Cancel")
         self.cancel_button.setFixedSize(70, 30)
 
         # self.cancel_button.clicked.connect(self.reject)
 
-        # Добавляем виджеты в layout
+        # Р”РѕР±Р°РІР»СЏРµРј РІРёРґР¶РµС‚С‹ РІ layout
         layout.addWidget(self.label_01)
         layout.addWidget(self.progress_01)
         layout.addWidget(self.label_02)
         layout.addWidget(self.progress_02)
         layout.addWidget(self.cancel_button, alignment=Qt.AlignCenter)
 
-        # Настройка прогрессбаров
+        # РќР°СЃС‚СЂРѕР№РєР° РїСЂРѕРіСЂРµСЃСЃР±Р°СЂРѕРІ
         self.progress_01.setRange(0, 100)
         self.progress_02.setRange(0, 100)
 
