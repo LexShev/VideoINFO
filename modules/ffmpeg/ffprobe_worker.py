@@ -83,7 +83,6 @@ class FFprobeScan(QRunnable):
             "-show_streams",
             "-show_format"
         ]
-        print(command)
 
         output = subprocess.check_output(
             command,
@@ -357,7 +356,6 @@ class BlackDetect(QRunnable):
             self.scan_result = black_detect_list
             if not self._is_running:
                 return
-            print(black_detect_list)
             self.mongo.update_file_info(self.file_path, {'ffmpeg_scanners.black_detect': black_detect_list})
 
         except subprocess.CalledProcessError as e:
@@ -428,7 +426,6 @@ class SilenceDetect(QRunnable):
                 '-f', 'null',
                 '-'
             ]
-            print(command)
             output = subprocess.Popen(
                 command,
                 stdout=subprocess.PIPE,
@@ -444,7 +441,6 @@ class SilenceDetect(QRunnable):
             silence_detect_list = []
             current_triple = {}
             for line in output.stdout:
-                print(line)
                 if not self._is_running:
                     output.terminate()
                     break
@@ -560,7 +556,6 @@ class FreezeDetect(QRunnable):
                 '-f', 'null',
                 '-'
                 ]
-            print(command)
             output = subprocess.Popen(
                 command,
                 stdout=subprocess.PIPE,

@@ -35,240 +35,237 @@ from modules.database.posql_connection import DataPos
 
 
 class VideoInfo(QMainWindow):
-
     def __init__(self):
-        super(VideoInfo, self).__init__()
+        super().__init__()
 
+        # Инициализация компонентов
+        self._init_components()
+        self._init_ui()
+        self._init_connections()
+        self._init_styles()
+        self._init_models()
+        self._init_file_manager()
+
+    def _init_components(self):
+        """Инициализация основных компонентов приложения"""
         self.progress_dialog = None
         self.close_progress_dialog_btn = None
         self.ffmpeg_scanners = []
-        self.thread_pool = QThreadPool()
-        self.thread_pool.setMaxThreadCount(1)
-        self.double_progress_bar = DoubleProgressDialog(parent=self)
-        self.double_progress_bar.setModal(False)
-        self.double_progress_bar.cancel_button.clicked.connect(self.stop_processing)
-
         self.ffprobe_scanners = []
+
+        # Пул потоков для обработки
+        self.thread_ffmpeg = QThreadPool()
+        self.thread_ffmpeg.setMaxThreadCount(1)
+
         self.thread_ffprobe = QThreadPool()
         self.thread_ffprobe.setMaxThreadCount(1)
-        self.single_progress_dialog = SingleProgressDialog(parent=self)
-        self.single_progress_dialog.cancel_button.clicked.connect(self.stop_single_processing)
 
+        # Диалоги прогресса
+        self.single_progress_dialog = SingleProgressDialog(parent=self)
+
+        self.double_progress_bar = DoubleProgressDialog(parent=self)
+        self.double_progress_bar.setModal(False)
+
+
+        # Модели данных
         self.mongo = MongoDB()
         self.settings = Settings()
-
-        self.ui = Ui_MainWindow()
-        self.ui.setupUi(self)
-
-
         self.video_info_player = None
 
+        # Флаги состояния
         self.table_mode = True
         self.switch_tool_flag = False
 
+        # Конфигурация
+        self.config = configparser.ConfigParser()
+        self.config.read(SET_NAME)
+
+    def _init_ui(self):
+        """Инициализация пользовательского интерфейса"""
+        self.ui = Ui_MainWindow()
+        self.ui.setupUi(self)
+
+        # Инициализация таблиц
         self.init_table_widget()
 
-        # colors
+        # Скрытие элементов
+        self.ui.delete_from_dbButton.hide()
+        self.ui.move_to_dbButton.hide()
+        self.ui.move_to_tableButton.hide()
+        self.ui.queueButton.hide()
+        self.ui.tableView_db.hide()
+        self.ui.wave_view.hide()
+        self.ui.r128_loudness.hide()
+        self.ui.resizeButtonDown.hide()
+
+        # Настройка таблицы БД
+        self.tbl_name = 'films'
+        self.sqlite_db_name = os.path.join(SQLITE_DIR, 'sqlite_videoinfo.db')
+        self.sqlite_db = QtSql.QSqlDatabase.addDatabase('QSQLITE')
+        self.sqlite_db.setDatabaseName(self.sqlite_db_name)
+
+    def _init_connections(self):
+        """Инициализация соединений сигналов и слотов"""
+        # Кнопки
+        self._init_button_connections()
+        # Меню
+        self._init_menu_connections()
+        # Прогресс-бары
+        self.double_progress_bar.cancel_button.clicked.connect(self.stop_ffmpeg_processing)
+        self.single_progress_dialog.cancel_button.clicked.connect(self.stop_ffprobe_processing)
+        # Таблицы
+        self.ui.tableWidget_01.horizontalHeader().sectionClicked.connect(self.error_highlight)
+        self.ui.tableWidget_01.clicked.connect(self.click_table_w)
+        self.ui.tableWidget_01.doubleClicked.connect(self.double_click_video_player)
+        self.ui.tableView_db.clicked.connect(self.click_table_db)
+
+        # WaveView
+        self.ui.resizeButtonUp.clicked.connect(self.wave_view)
+        self.ui.resizeButtonDown.clicked.connect(self.wave_hide)
+
+    def _init_button_connections(self):
+        """Инициализация соединений для кнопок"""
+        buttons = {
+            self.ui.switchToolButton: self.switch_tools,
+            self.ui.addButton: self.prepare_table_01,
+            self.ui.delButton: self.del_selected_rows,
+            self.ui.delete_from_dbButton: self.del_file_from_db,
+            self.ui.move_to_dbButton: self.move_to_db,
+            self.ui.playButton: self.play_selected,
+            self.ui.openButton: self.open_folder,
+            self.ui.move_to_tableButton: self.move_to_table_01,
+            self.ui.exportButton: self.export_db_xlsx,
+            self.ui.r128DtctButton: self.scan_loudnorm,
+            self.ui.blckDtctButton: self.scan_black_detect,
+            self.ui.slncDtctButton: self.scan_silence_detect,
+            self.ui.frzDtctButton: self.scan_freeze_detect,
+            self.ui.fullDtctButton: self.full_detect,
+            self.ui.migrateButton: self.file_manage,
+            self.ui.settingsButton: self.settings.open_settings_window,
+            self.ui.switchModeButton: self.switch_db_editor
+        }
+
+        for button, slot in buttons.items():
+            button.clicked.connect(slot)
+
+    def _init_menu_connections(self):
+        """Инициализация соединений для меню"""
+        actions = {
+            self.ui.actionAdd_files: self.prepare_table_01,
+            self.ui.actionDelete_selected_file: self.del_selected_rows,
+            self.ui.actionPlay_selected_file: self.play_selected,
+            self.ui.actionOpen_destination_folder: self.open_folder,
+            self.ui.actionSelected_files: self.selected_db_file_list,
+            self.ui.actionExport_table_to_Excel: self.export_tbl_xlsx,
+            self.ui.actionExport_all_db_to_Excel: self.export_db_xlsx,
+            self.ui.actionSettings: self.settings.open_settings_window,
+            self.ui.actionClear_table: self.clear_table_01,
+            self.ui.actionCheck_DB: self.check_data_base,
+            self.ui.actionShow_all_tables: self.show_db_tables,
+            self.ui.actionChoose_default_directory: self.choose_default_dir,
+            self.ui.actionRun_Loudness_selected_scan: self.scan_loudnorm,
+            self.ui.actionRun_SilenceDetect_selected_scan: self.scan_silence_detect,
+            self.ui.actionRun_BlackDetect_selected_scan: self.scan_black_detect,
+            self.ui.actionRun_FreezeDetect_selected_scan: self.scan_freeze_detect,
+            self.ui.actionRun_Full_selected_scan: self.full_detect,
+            self.ui.actionOpen_db_editor: self.switch_db_editor,
+            self.ui.actionCreate_db: self.create_new_db,
+            self.ui.actionReset_scan_result_for_file: self.reset_mediainfo_tbl_01,
+            self.ui.actionDelete_from_db: self.clear_mediainfo,
+            self.ui.actionShow_Loudness: self.show_loudness,
+            self.ui.actionShow_Details: self.show_details
+        }
+
+        for action, slot in actions.items():
+            action.triggered.connect(slot)
+
+    def _init_styles(self):
+        """Инициализация стилей и цветов"""
+        # Цвета
         self.red_light = QColor(205, 90, 80)
-        self.red_dark = QColor(195, 75, 60)  # C34B3C
+        self.red_dark = QColor(195, 75, 60)
         self.yell_light = QColor(230, 165, 45)
         self.yell_dark = QColor(230, 145, 25)
         self.green_light = QColor(88, 145, 39)
         self.green_dark = QColor(79, 130, 35)
         self.white = QColor(255, 255, 255)
-
-        self.ui.switchToolButton.clicked.connect(self.switch_tools)
-        self.ui.switchToolButton.setToolTip('Подробнее')
-        self.colorizeEffect_wt(self.ui.switchToolButton)
-
-        self.ui.tableWidget_01.horizontalHeader().sectionClicked.connect(self.error_highlight)
-        self.ui.tableWidget_01.clicked.connect(self.click_table_w)
-        # self.ui.tableWidget_01.doubleClicked.connect(self.double_click_table)
-        self.ui.tableWidget_01.doubleClicked.connect(self.double_click_video_player)
-
-        self.ui.addButton.clicked.connect(self.prepare_table_01)
-
-        self.ui.addButton.setToolTip('Добавить файлы')
-        self.colorizeEffect_wt(self.ui.addButton)
-        self.ui.delButton.clicked.connect(self.del_selected_rows)
-        self.ui.delButton.setToolTip('Удалить выбранное')
-        self.ui.delete_from_dbButton.hide()
-        self.ui.delete_from_dbButton.clicked.connect(self.del_file_from_db)
-        self.colorizeEffect_wt(self.ui.delete_from_dbButton)
-        self.ui.move_to_dbButton.setToolTip('Удалить выбранное из базы данных')
-        self.ui.move_to_dbButton.clicked.connect(self.move_to_db)
-        # self.ui.move_to_dbButton.clicked.connect(self.del_file_from_db)
-        self.ui.move_to_dbButton.hide()
-        self.colorizeEffect_wt(self.ui.move_to_dbButton)
-        self.ui.move_to_dbButton.setToolTip('Переместить выбранное в основную базу данных')
-        self.ui.playButton.clicked.connect(self.play_selected)
-        self.ui.playButton.setToolTip('Воспроизвести выбранное')
-        self.ui.openButton.clicked.connect(self.open_folder)
-        self.ui.openButton.setToolTip('Открыть папку с файлом')
-        self.ui.move_to_tableButton.clicked.connect(self.move_to_table_01)
-        self.ui.move_to_tableButton.setToolTip('Открыть в таблице')
-        self.colorizeEffect_wt(self.ui.move_to_tableButton)
-        self.ui.move_to_tableButton.hide()
-        self.ui.exportButton.clicked.connect(self.export_db_xlsx)
-        self.ui.exportButton.setToolTip('Экспорт базы данных в Excel')
-
-        self.ui.r128DtctButton.clicked.connect(self.scan_loudnorm)
-        self.ui.r128DtctButton.setToolTip('Сканировать выбранное R128')
-        self.ui.blckDtctButton.clicked.connect(self.scan_black_detect)
-        self.ui.blckDtctButton.setToolTip('Сканировать выбранное Black')
-        self.ui.slncDtctButton.clicked.connect(self.scan_silence_detect)
-        self.ui.slncDtctButton.setToolTip('Сканировать выбранное Silence')
-        self.ui.frzDtctButton.clicked.connect(self.scan_freeze_detect)
-        self.ui.frzDtctButton.setToolTip('Сканировать выбранное Freeze')
-        self.ui.fullDtctButton.clicked.connect(self.full_detect)
-        self.ui.fullDtctButton.setToolTip('Полное сканирование')
-        self.ui.migrateButton.clicked.connect(self.file_manage)
-        self.ui.migrateButton.setToolTip('Копирование и переименование')
-        self.ui.settingsButton.clicked.connect(self.settings.open_settings_window)
-        self.ui.settingsButton.setToolTip('Настройки')
-        self.colorizeEffect_wt(self.ui.settingsButton)
-        self.ui.switchModeButton.clicked.connect(self.switch_db_editor)
-        self.ui.switchModeButton.setToolTip('Редактирование базы данных')
-        self.colorizeEffect_wt(self.ui.switchModeButton)
-
-        self.colorizeEffect_wt(self.ui.resizeButtonUp)
-        self.colorizeEffect_wt(self.ui.resizeButtonDown)
-
-        self.ui.delButton.setEnabled(False)
-        self.colorizeEffect_gr(self.ui.delButton)
-        self.ui.playButton.setEnabled(False)
-        self.colorizeEffect_gr(self.ui.playButton)
-        self.ui.openButton.setEnabled(False)
-        self.colorizeEffect_gr(self.ui.openButton)
-        self.ui.r128DtctButton.setEnabled(False)
-        self.colorizeEffect_gr(self.ui.r128DtctButton)
-        self.ui.queueButton.setEnabled(False)
-        self.colorizeEffect_gr(self.ui.queueButton)
-        self.ui.queueButton.hide()
-        self.ui.blckDtctButton.setEnabled(False)
-        self.colorizeEffect_gr(self.ui.blckDtctButton)
-        self.ui.slncDtctButton.setEnabled(False)
-        self.colorizeEffect_gr(self.ui.slncDtctButton)
-        self.ui.frzDtctButton.setEnabled(False)
-        self.colorizeEffect_gr(self.ui.frzDtctButton)
-        self.ui.fullDtctButton.setEnabled(False)
-        self.colorizeEffect_gr(self.ui.fullDtctButton)
-        self.colorizeEffect_wt(self.ui.exportButton)
-        # self.ui.migrateButton.setEnabled(False)
-        self.colorizeEffect_wt(self.ui.migrateButton)
-
         self.grey_light = QColor(65, 65, 70)
         self.grey_dark = QColor(40, 40, 45)
 
-        # Config settings
+        # Стили кнопок
+        self._init_button_styles()
 
-        self.config = configparser.ConfigParser()
-        self.config.read(SET_NAME)
+    def _init_button_styles(self):
+        """Инициализация стилей кнопок"""
+        # Кнопки с белым текстом
+        white_buttons = [
+            self.ui.switchToolButton, self.ui.addButton,
+            self.ui.delete_from_dbButton, self.ui.move_to_dbButton,
+            self.ui.move_to_tableButton, self.ui.settingsButton,
+            self.ui.switchModeButton, self.ui.resizeButtonUp,
+            self.ui.resizeButtonDown, self.ui.exportButton,
+            self.ui.migrateButton
+        ]
+        for button in white_buttons:
+            self.colorizeEffect_wt(button)
 
-        # DB Edit Dialog
-        self.db_sett = QDialog()
-        self.db_settings = Ui_DB_Settings()
-        self.db_settings.setupUi(self.db_sett)
+        # Серые кнопки (отключенные)
+        gray_buttons = [
+            self.ui.delButton, self.ui.playButton,
+            self.ui.openButton, self.ui.r128DtctButton,
+            self.ui.queueButton, self.ui.blckDtctButton,
+            self.ui.slncDtctButton, self.ui.frzDtctButton,
+            self.ui.fullDtctButton
+        ]
+        for button in gray_buttons:
+            self.colorizeEffect_gr(button)
 
-        # DB_Editor
+        # Настройка тулбара
+        self._init_toolbar_styles()
 
-        self.ui.tableView_db.clicked.connect(self.click_table_db)
-        self.tbl_name = 'films'
+    def _init_toolbar_styles(self):
+        """Инициализация стилей тулбара"""
+        self.choose_btn_style_wt = """
+            QPushButton{
+                color: rgb(255, 255, 255);
+                background-color:rgba(255,255,255,30);
+                border: 1px solid rgba(255,255,255,40);
+                border-radius:3px;
+            }
+            QPushButton:hover{
+                background-color:rgba(255,255,255,50);
+            }
+            QPushButton:pressed{
+                background-color:rgba(255,255,255,70);
+            }
+        """
 
-
-        self.sqlite_db_name = os.path.join(SQLITE_DIR, 'sqlite_videoinfo.db')
-        self.sqlite_db = QtSql.QSqlDatabase.addDatabase('QSQLITE')
-        self.sqlite_db.setDatabaseName(self.sqlite_db_name)
-
-        self.sqlite_model = QSqlTableModel(self)
-        self.sqlite_model.setTable(self.tbl_name)
-        self.sqlite_model.select()
-
-        self.mongo_model = MongoTableModel()
-        self.mongo_model.load_from_mongo()
-        self.ui.tableView_db.setModel(self.mongo_model)
-        self.ui.tableView_db.hide()
-        self.ui.tableView_db.hideColumn(0)
-        self.ui.tableView_db.setColumnWidth(1, 400)
-
-        self.posql_model = TableModel([0, 0], [0, 0])
-
-        # WaveView
-        self.ui.wave_view.hide()
-        self.ui.r128_loudness.hide()
-        self.ui.resizeButtonDown.hide()
-        # self.wave_flag = False
-        self.ui.resizeButtonUp.clicked.connect(self.wave_view)
-        self.ui.resizeButtonDown.clicked.connect(self.wave_hide)
-
-        # MenuBar
-        self.ui.actionAdd_files.triggered.connect(self.prepare_table_01)
-        self.ui.actionDelete_selected_file.triggered.connect(self.del_selected_rows)
-        self.ui.actionPlay_selected_file.triggered.connect(self.play_selected)
-
-        self.ui.actionOpen_destination_folder.triggered.connect(self.open_folder)
-        self.ui.actionSelected_files.triggered.connect(self.selected_db_file_list)
-
-        self.ui.actionExport_table_to_Excel.triggered.connect(self.export_tbl_xlsx)
-        self.ui.actionExport_all_db_to_Excel.triggered.connect(self.export_db_xlsx)
-        self.ui.actionSettings.triggered.connect(self.settings.open_settings_window)
-        # self.ui.actionOpen_VideoPlayer.triggered.connect(self.switch_db_editor)
-        self.ui.actionOpen_VideoPlayer.setEnabled(False)
-        self.ui.actionClear_table.triggered.connect(self.clear_table_01)
-        self.ui.actionCheck_DB.triggered.connect(self.check_data_base)
-        self.ui.actionShow_all_tables.triggered.connect(self.show_db_tables)
-        # self.ui.actionUpdate_data_for_file.triggered.connect(self.update_ffprobe)
-        self.ui.actionChoose_default_directory.triggered.connect(self.choose_default_dir)
-
-        self.ui.actionRun_Loudness_selected_scan.triggered.connect(self.scan_loudnorm)
-        self.ui.actionRun_SilenceDetect_selected_scan.triggered.connect(self.scan_silence_detect)
-        # self.ui.actionRun_SilenceDetect_single_scan.triggered.connect(self.prepare_silence_detect_single)
-        # self.ui.actionRun_SilenceDetect_multiple_scan.triggered.connect(self.prepare_silence_detect_multi)
-        self.ui.actionRun_BlackDetect_selected_scan.triggered.connect(self.scan_black_detect)
-        self.ui.actionRun_FreezeDetect_selected_scan.triggered.connect(self.scan_freeze_detect)
-        # self.ui.actionRun_FreezeDetect_single_scan.triggered.connect(self.prepare_freeze_detect_single)
-        # self.ui.actionRun_FreezeDetect_multiple_scan.triggered.connect(self.prepare_freeze_detect_multi)
-        self.ui.actionRun_Full_selected_scan.triggered.connect(self.full_detect)
-        # self.ui.actionRun_Full_single_scan.triggered.connect(self.prepare_full_detect_single)
-        # self.ui.actionRun_Full_multiple_scan.triggered.connect(self.prepare_full_detect_multi)
-        # self.ui.actionRun_Background_Loudness_scan.triggered.connect(self.prepare_background_loudnorm_scan)
-        # self.ui.actionRun_Background_BlackDetect_scan.triggered.connect(self.prepare_background_blackdetect_scan)
-        # self.ui.actionRun_Background_SilenceDetect_scan.triggered.connect(self.prepare_background_silencedetect_scan)
-        # self.ui.actionRun_Background_FreezeDetect_scan.triggered.connect(self.prepare_background_freezedetect_scan)
-        # self.ui.actionRun_Background_Full_scan.triggered.connect(self.prepare_background_fulldetect_scan)
-
-        self.ui.actionOpen_db_editor.triggered.connect(self.switch_db_editor)
-
-        self.ui.actionCreate_db.triggered.connect(self.create_new_db)
-        self.ui.actionReset_scan_result_for_file.triggered.connect(self.reset_mediainfo_tbl_01)
-        self.ui.actionDelete_from_db.triggered.connect(self.clear_mediainfo)
-        self.ui.actionShow_Loudness.triggered.connect(self.show_loudness)
-        self.ui.actionShow_Details.triggered.connect(self.show_details)
+        self.choose_btn_style_red = """
+            QPushButton{
+                color: rgb(255, 28, 0);
+                background-color:rgba(255, 28, 0, 30);
+                border: 1px solid rgba(255, 28, 0, 40);
+                border-radius:3px;
+            }
+            QPushButton:hover{
+                background-color:rgba(255, 28, 0, 50);
+            }
+            QPushButton:pressed{
+                background-color:rgba(255, 28, 0, 70);
+            }
+        """
 
         self.choose_base_btn = QPushButton()
         self.choose_base_btn.setMinimumSize(QSize(60, 30))
         self.choose_base_btn.setMaximumSize(QSize(60, 30))
         self.choose_base_btn.setText('DB')
-        self.choose_btn_style_wt = ('QPushButton{color: rgb(255, 255, 255);'
-                                    'background-color:rgba(255,255,255,30);'
-                                    'border: 1px solid rgba(255,255,255,40);'
-                                    'border-radius:3px;}'
-                                    'QPushButton:hover'
-                                    '{background-color:rgba(255,255,255,50);}'
-                                    'QPushButton:pressed{background-color:rgba(255,255,255,70);}')
-        self.choose_btn_style_red = ('QPushButton{color: rgb(255, 28, 0);'
-                                     'background-color:rgba(255, 28, 0, 30);'
-                                     'border: 1px solid rgba(255, 28, 0, 40);'
-                                     'border-radius:3px;}'
-                                     'QPushButton:hover'
-                                     '{background-color:rgba(255, 28, 0, 50);}'
-                                     'QPushButton:pressed{background-color:rgba(255, 28, 0, 70);}')
         self.choose_base_btn.setStyleSheet(self.choose_btn_style_wt)
         self.choose_base_btn.clicked.connect(self.select_db)
+
         self.ui.toolBar.addWidget(self.choose_base_btn)
-        self.ui.toolBar.setStyleSheet('padding-left: 10px;'
-                                      'margin-right: 10px;'
-                                      'margin-left: 10px;')
+        self.ui.toolBar.setStyleSheet('padding-left: 10px; margin-right: 10px; margin-left: 10px;')
+
+        # Комбобокс выбора таблицы
         self.choose_table_cmbx = QComboBox()
         self.choose_table_cmbx.addItems(ast.literal_eval(self.config['Toolbar']['table_name_combobox']))
         self.choose_table_cmbx.currentTextChanged.connect(self.update_db_table)
@@ -276,109 +273,109 @@ class VideoInfo(QMainWindow):
         self.choose_table_cmbx.setMinimumSize(QSize(160, 0))
         self.ui.toolBar.addWidget(self.choose_table_cmbx)
 
+        # Поле фильтрации
         self.filter_table = QLineEdit()
         self.filter_table.setPlaceholderText("Filter...")
         self.ui.toolBar.addWidget(self.filter_table)
 
         self.selected_db = 'SQLITE'
 
-        # progress_dialog
-        # self.progress_dialog_label = QLabel()
-        # self.progress_dialog_label.setAlignment(Qt.AlignCenter)
-        # self.progress_dialog_label.setWordWrap(True)
+    def _init_models(self):
+        """Инициализация моделей данных"""
+        # SQLite модель
+        self.sqlite_model = QSqlTableModel(self)
+        self.sqlite_model.setTable(self.tbl_name)
+        self.sqlite_model.select()
 
-        # Confirm action
-        self.conf_action = QDialog()
-        self.conf_dialog = Ui_ConfirmDialog()
-        self.conf_dialog.setupUi(self.conf_action)
+        # MongoDB модель
+        self.mongo_model = MongoTableModel()
+        self.mongo_model.load_from_mongo()
 
-        self.posql_proxy_model = QSortFilterProxyModel()
-        self.posql_proxy_model.setFilterKeyColumn(0)  # Search all columns.
-        self.posql_proxy_model.sort(1, Qt.AscendingOrder)
-        self.filter_table.textChanged.connect(self.posql_proxy_model.setFilterFixedString)
+        # Прокси модели для сортировки и фильтрации
+        self._init_proxy_models()
 
+        # Установка модели по умолчанию
+        self.ui.tableView_db.setModel(self.sqlite_proxy_model)
+
+        # Подключение фильтрации
+        self.filter_table.textChanged.connect(self.sqlite_proxy_model.setFilterFixedString)
+        self.filter_table.textChanged.connect(self.search_main_table)
+
+    def _init_proxy_models(self):
+        """Инициализация прокси-моделей для сортировки и фильтрации"""
+        # SQLite прокси модель
         self.sqlite_proxy_model = QSortFilterProxyModel()
         self.sqlite_proxy_model.setFilterKeyColumn(1)
         self.sqlite_proxy_model.setSourceModel(self.sqlite_model)
         self.sqlite_proxy_model.sort(1, Qt.AscendingOrder)
 
-        self.ui.tableView_db.setModel(self.sqlite_proxy_model)
-        self.filter_table.textChanged.connect(self.sqlite_proxy_model.setFilterFixedString)
+        # PostgreSQL прокси модель
+        self.posql_proxy_model = QSortFilterProxyModel()
+        self.posql_proxy_model.setFilterKeyColumn(0)
+        self.posql_proxy_model.sort(1, Qt.AscendingOrder)
 
-        self.filter_table.textChanged.connect(self.search_main_table)
+        # Модель для PostgreSQL
+        self.posql_model = TableModel([0, 0], [0, 0])
 
-        # File manager
-
+    def _init_file_manager(self):
+        """Инициализация файлового менеджера"""
         self.fmanage = QWidget()
         self.file_manager = Ui_FileManager()
         self.file_manager.setupUi(self.fmanage)
-        self.file_manager.treeView_source.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.file_manager.treeView_source.setSortingEnabled(True)
-        self.file_manager.treeView_source.sortByColumn(0, Qt.AscendingOrder)
 
+        # Настройка моделей для treeView
+        self._init_file_manager_models()
+        # Настройка соединений
+        self._init_file_manager_connections()
+        # Настройка стилей
+        self._init_file_manager_styles()
+
+    def _init_file_manager_models(self):
+        """Инициализация моделей для файлового менеджера"""
+        # Модель для исходного пути
         self.treeView_source_model = QtWidgets.QFileSystemModel()
         self.treeView_source_model.setRootPath(QDir.rootPath())
-        # self.treeView_source_model.sort(0, Qt.AscendingOrder)
         self.file_manager.treeView_source.setModel(self.treeView_source_model)
         self.file_manager.treeView_source.setColumnWidth(0, 300)
         self.file_manager.treeView_source.hide()
 
+        # Модель для пути назначения
         self.treeView_destination_model = QtWidgets.QFileSystemModel()
         self.treeView_destination_model.setRootPath(QDir.rootPath())
-        # self.treeView_destination_model.sort(0, Qt.AscendingOrder)
         self.file_manager.treeView_destination.setModel(self.treeView_destination_model)
         self.file_manager.treeView_destination.setColumnWidth(0, 300)
         self.file_manager.treeView_destination.setSortingEnabled(True)
         self.file_manager.treeView_destination.sortByColumn(0, Qt.AscendingOrder)
         self.file_manager.listWidget_destination.hide()
-        self.colorizeEffect_wt(self.file_manager.rename_Button)
-        self.colorizeEffect_wt(self.file_manager.undo_rename_Button)
-        self.colorizeEffect_wt(self.file_manager.copy_to_dbButton)
-        self.colorizeEffect_wt(self.file_manager.copy_from_dbButton)
-        self.colorizeEffect_wt(self.file_manager.move_to_dbButton)
-        self.colorizeEffect_wt(self.file_manager.move_from_dbButton)
-        self.norm_tub_style = ('QPushButton{color: white}'
-                               'QPushButton:hover{color: white; background-color: rgba(255,255,255,20)}'
-                               'QPushButton:pressed{color: white; background-color: rgba(255,255,255,40)}')
-        self.selected_tub_style = ('QPushButton{color: white; background-color: rgba(255,255,255,30)}'
-                               'QPushButton:hover{color: white; background-color: rgba(255,255,255,20)}'
-                               'QPushButton:pressed{color: white; background-color: rgba(255,255,255,40)}')
 
+    def _init_file_manager_connections(self):
+        """Инициализация соединений для файлового менеджера"""
+        # Настройки маски
         self.file_manager.comboBox_preset.currentTextChanged.connect(self.set_mask_preset)
         self.file_manager.mask_full.setText(self.config['Mask_preset']['prst1'])
         self.mask_preset()
-        self.file_manager.comboBox_digits.addItems(['1', '2', '3', '4', '5', '6', '7', '8', '9'])
-        self.file_manager.comboBox_digits.setCurrentText('1')
-        self.file_manager.comboBox_upper.addItems(['Unchanged', 'all lowercase', 'ALL UPPERCASE',
-                                                   'First letter uppercase', 'First Of Each Word Uppercase'])
-        self.file_manager.comboBox_upper.setCurrentText('Unchanged')
 
+        # Кнопки выбора источника
         self.file_manager.source_tub1.clicked.connect(self.source_file_list_manager_b1)
-        self.file_manager.source_tub1.setText(self.config['Tubs_source']['tub1'])
         self.file_manager.source_tub2.clicked.connect(self.source_file_tree_manager_b2)
-        self.file_manager.source_tub2.setText(self.config['Tubs_source']['tub2'])
         self.file_manager.source_tub3.clicked.connect(self.source_file_tree_manager_b3)
-        self.file_manager.source_tub3.setText(self.config['Tubs_source']['tub3'])
         self.file_manager.source_tub4.clicked.connect(self.source_file_tree_manager_b4)
-        self.file_manager.source_tub4.setText(self.config['Tubs_source']['tub4'])
         self.file_manager.source_tub5.clicked.connect(self.source_file_tree_manager_b5)
-        self.file_manager.source_tub5.setText(self.config['Tubs_source']['tub5'])
 
+        # Кнопки выбора назначения
         self.file_manager.destination_tub1.clicked.connect(self.destination_file_tree_manager_b1)
-        self.file_manager.destination_tub1.setText(self.config['Tubs_destination']['tub1'])
         self.file_manager.destination_tub2.clicked.connect(self.destination_file_tree_manager_b2)
-        self.file_manager.destination_tub2.setText(self.config['Tubs_destination']['tub2'])
         self.file_manager.destination_tub3.clicked.connect(self.destination_file_tree_manager_b3)
-        self.file_manager.destination_tub3.setText(self.config['Tubs_destination']['tub3'])
         self.file_manager.destination_tub4.clicked.connect(self.destination_file_tree_manager_b4)
-        self.file_manager.destination_tub4.setText(self.config['Tubs_destination']['tub4'])
         self.file_manager.destination_tub5.clicked.connect(self.destination_file_list_manager_b5)
-        self.file_manager.destination_tub5.setText(self.config['Tubs_destination']['tub5'])
 
+        # Элементы управления маской
         self.file_manager.mask_name.clicked.connect(self.add_name)
         self.file_manager.mask_counter.clicked.connect(self.add_counter)
         self.file_manager.mask_date.clicked.connect(self.add_date)
         self.file_manager.mask_time.clicked.connect(self.add_time)
+
+        # Соединения для изменения маски
         self.file_manager.mask_full.textChanged.connect(self.destination_file_list_manager_b5)
         self.file_manager.comboBox_upper.currentTextChanged.connect(self.destination_file_list_manager_b5)
         self.file_manager.mask_search.textChanged.connect(self.destination_file_list_manager_b5)
@@ -387,13 +384,7 @@ class VideoInfo(QMainWindow):
         self.file_manager.spinBox_step.textChanged.connect(self.destination_file_list_manager_b5)
         self.file_manager.comboBox_digits.currentTextChanged.connect(self.destination_file_list_manager_b5)
 
-        self.file_manager.rename_Button.setToolTip('Rename all')
-        self.file_manager.undo_rename_Button.setToolTip('Undo Rename all')
-        self.file_manager.copy_to_dbButton.setToolTip('Copy to base')
-        self.file_manager.copy_from_dbButton.setToolTip('Copy from base')
-        self.file_manager.move_to_dbButton.setToolTip('Move to base')
-        self.file_manager.move_from_dbButton.setToolTip('Move from base')
-
+        # Кнопки действий
         self.file_manager.rename_Button.clicked.connect(self.file_list_rename)
         self.file_manager.undo_rename_Button.clicked.connect(self.undo_rename)
         self.file_manager.copy_to_dbButton.clicked.connect(self.file_list_copy_to)
@@ -401,9 +392,64 @@ class VideoInfo(QMainWindow):
         self.file_manager.move_to_dbButton.clicked.connect(self.file_list_move_to)
         self.file_manager.move_from_dbButton.clicked.connect(self.file_list_move_from)
 
-        # START PROGRAM
-        # self.db_connect()
-        # self.create_db_table()
+    def _init_file_manager_styles(self):
+        """Инициализация стилей для файлового менеджера"""
+        # Стили кнопок
+        buttons = [
+            self.file_manager.rename_Button,
+            self.file_manager.undo_rename_Button,
+            self.file_manager.copy_to_dbButton,
+            self.file_manager.copy_from_dbButton,
+            self.file_manager.move_to_dbButton,
+            self.file_manager.move_from_dbButton
+        ]
+        for button in buttons:
+            self.colorizeEffect_wt(button)
+
+        # Стили вкладок
+        self.norm_tub_style = """
+            QPushButton{color: white}
+            QPushButton:hover{color: white; background-color: rgba(255,255,255,20)}
+            QPushButton:pressed{color: white; background-color: rgba(255,255,255,40)}
+        """
+
+        self.selected_tub_style = """
+            QPushButton{color: white; background-color: rgba(255,255,255,30)}
+            QPushButton:hover{color: white; background-color: rgba(255,255,255,20)}
+            QPushButton:pressed{color: white; background-color: rgba(255,255,255,40)}
+        """
+
+        # Настройка комбобоксов
+        self.file_manager.comboBox_digits.addItems(['1', '2', '3', '4', '5', '6', '7', '8', '9'])
+        self.file_manager.comboBox_digits.setCurrentText('1')
+
+        self.file_manager.comboBox_upper.addItems([
+            'Unchanged', 'all lowercase', 'ALL UPPERCASE',
+            'First letter uppercase', 'First Of Each Word Uppercase'
+        ])
+        self.file_manager.comboBox_upper.setCurrentText('Unchanged')
+
+        # Установка текста из конфига
+        self.file_manager.source_tub1.setText(self.config['Tubs_source']['tub1'])
+        self.file_manager.source_tub2.setText(self.config['Tubs_source']['tub2'])
+        self.file_manager.source_tub3.setText(self.config['Tubs_source']['tub3'])
+        self.file_manager.source_tub4.setText(self.config['Tubs_source']['tub4'])
+        self.file_manager.source_tub5.setText(self.config['Tubs_source']['tub5'])
+
+        self.file_manager.destination_tub1.setText(self.config['Tubs_destination']['tub1'])
+        self.file_manager.destination_tub2.setText(self.config['Tubs_destination']['tub2'])
+        self.file_manager.destination_tub3.setText(self.config['Tubs_destination']['tub3'])
+        self.file_manager.destination_tub4.setText(self.config['Tubs_destination']['tub4'])
+        self.file_manager.destination_tub5.setText(self.config['Tubs_destination']['tub5'])
+
+        # Подсказки
+        self.file_manager.rename_Button.setToolTip('Rename all')
+        self.file_manager.undo_rename_Button.setToolTip('Undo Rename all')
+        self.file_manager.copy_to_dbButton.setToolTip('Copy to base')
+        self.file_manager.copy_from_dbButton.setToolTip('Copy from base')
+        self.file_manager.move_to_dbButton.setToolTip('Move to base')
+        self.file_manager.move_from_dbButton.setToolTip('Move from base')
+
 
     def init_table_widget(self):
         self.ui.tableWidget_01.keyPressEvent = self.table_key_press_event
@@ -433,7 +479,7 @@ class VideoInfo(QMainWindow):
             self.progress_dialog = QProgressDialog()
             self.close_progress_dialog_btn = QPushButton('Cancel')
             self.progress_dialog.setCancelButton(self.close_progress_dialog_btn)
-            self.close_progress_dialog_btn.clicked.connect(self.stop_processing)
+            self.close_progress_dialog_btn.clicked.connect(self.stop_ffmpeg_processing)
             self.progress_dialog.setWindowModality(Qt.WindowModal)
             self.progress_dialog.setMinimumDuration(0)
             self.progress_dialog.setFixedSize(650, 150)
@@ -444,14 +490,14 @@ class VideoInfo(QMainWindow):
                 "QPushButton:pressed{background-color:rgba(255,255,255,70);}"
             )
 
-    def stop_single_processing(self):
+    def stop_ffprobe_processing(self):
         for scanner in self.ffprobe_scanners:
             if hasattr(scanner, 'stop'):
                 scanner.stop()
-        self.ffmpeg_scanners.clear()
+        self.ffprobe_scanners.clear()
         self.single_progress_dialog.close()
 
-    def stop_processing(self):
+    def stop_ffmpeg_processing(self):
         for scanner in self.ffmpeg_scanners:
             if hasattr(scanner, 'stop'):
                 scanner.stop()
@@ -469,7 +515,7 @@ class VideoInfo(QMainWindow):
         self.ui.fullDtctButton.setEnabled(True)
         self.colorizeEffect_wt(self.ui.fullDtctButton)
 
-    def on_started(self, params):
+    def on_started_ffmpeg(self, params):
         self.ui.r128DtctButton.setEnabled(False)
         self.colorizeEffect_gr(self.ui.r128DtctButton)
         self.ui.blckDtctButton.setEnabled(False)
@@ -491,7 +537,7 @@ class VideoInfo(QMainWindow):
     #     self.double_progress_bar.label_01.setText(file_path)
     #     self.double_progress_bar.progress_02.setValue(num)
 
-    def on_progress(self, params):
+    def on_progress_ffmpeg(self, params):
         file_path = params.get('file_path')
         num = params.get('num')
         total_files = params.get('total_files')
@@ -505,7 +551,7 @@ class VideoInfo(QMainWindow):
         self.double_progress_bar.progress_02.setValue(total_progress)
         self.double_progress_bar.show()
 
-    def on_finished(self, params):
+    def on_finished_ffmpeg(self, params):
         file_path = params.get('file_path')
         num = params.get('num')
         total_files = params.get('total_files')
@@ -535,7 +581,7 @@ class VideoInfo(QMainWindow):
             self.ui.fullDtctButton.setEnabled(True)
             self.colorizeEffect_wt(self.ui.fullDtctButton)
 
-    def on_error(self, file_path, error):
+    def on_error_ffmpeg(self, file_path, error):
         print(f"Ошибка в {file_path}: {error}")
         dlg = AttentionDialog("ERROR", f"Ошибка в {file_path}: {error}")
         dlg.exec()
@@ -1617,13 +1663,13 @@ class VideoInfo(QMainWindow):
                 print(now())
                 print('Сбор данных для файла', file_path)
                 scanner = FFprobeScan(**params)
-                scanner.signals.started.connect(self.on_started)
-                scanner.signals.progress.connect(self.on_progress)
-                scanner.signals.finished.connect(self.on_finished)
-                scanner.signals.error.connect(self.on_error)
+                scanner.signals.started.connect(self.on_started_ffmpeg)
+                scanner.signals.progress.connect(self.on_progress_ffmpeg)
+                scanner.signals.finished.connect(self.on_finished_ffmpeg)
+                scanner.signals.error.connect(self.on_error_ffmpeg)
                 scanner.signals.scan_result.connect(self.create_table_01)
-                self.ffprobe_scanners.append(scanner)
-                self.thread_pool.start(scanner)
+                self.ffmpeg_scanners.append(scanner)
+                self.thread_ffmpeg.start(scanner)
                 print(now())
                 print('Сбор данных завершён')
             else:
@@ -1658,7 +1704,7 @@ class VideoInfo(QMainWindow):
                     scanner.signals.error.connect(self.on_error_ffprobe)
                     scanner.signals.scan_result.connect(self.create_table_01)
                     self.ffprobe_scanners.append(scanner)
-                    self.thread_pool.start(scanner)
+                    self.thread_ffmpeg.start(scanner)
                 else:
                     print('Use DB')
                     self.create_table_01(file_path, file_info)
@@ -2094,34 +2140,48 @@ class VideoInfo(QMainWindow):
                 item.setBackground(self.red_light)
 
             item = self.ui.tableWidget_01.item(row, 15)
+            if item.text() in ('not scanned', 'N/A'):
+                continue
             if item.text() == '-Inf':
                 item.setBackground(self.red_dark)
             elif item.text() and not isclose(float(item.text()), float(r128_i), abs_tol=0.5):
                 item.setBackground(self.yell_dark)
 
             item = self.ui.tableWidget_01.item(row, 16)
+            if item.text() in ('not scanned', 'N/A'):
+                continue
             if item.text() == '-Inf':
                 item.setBackground(self.red_light)
             elif item.text() and not isclose(float(item.text()), float(r128_tp), abs_tol=0.5):
                 item.setBackground(self.yell_light)
 
             item = self.ui.tableWidget_01.item(row, 17)
+            if item.text() in ('not scanned', 'N/A'):
+                continue
             if item.text() and not isclose(float(item.text()), float(r128_lra), abs_tol=5):
                 item.setBackground(self.yell_dark)
 
             item = self.ui.tableWidget_01.item(row, 18)
+            if item.text() in ('not scanned', 'N/A'):
+                continue
             if item.text() and not isclose(float(item.text()), float(r128_thr), abs_tol=0.5):
                 item.setBackground(self.yell_light)
             # black
             item = self.ui.tableWidget_01.item(row, 19)
+            if item.text() in ('not scanned', 'N/A'):
+                continue
             if item.text() and item.text() != 'N/A':
                 item.setBackground(self.red_dark)
             # silence
             item = self.ui.tableWidget_01.item(row, 20)
+            if item.text() in ('not scanned', 'N/A'):
+                continue
             if item.text() and item.text() != 'N/A':
                 item.setBackground(self.red_light)
             # freeze
             item = self.ui.tableWidget_01.item(row, 21)
+            if item.text() in ('not scanned', 'N/A'):
+                continue
             if item.text() and item.text() != 'N/A':
                 item.setBackground(self.red_dark)
         self.check_file_path()
@@ -2310,13 +2370,13 @@ class VideoInfo(QMainWindow):
                 print(now())
                 print('Запуск анализа уровня громкости файла', file_path)
                 scanner = R128Scan(**params)
-                scanner.signals.started.connect(self.on_started)
-                scanner.signals.progress.connect(self.on_progress)
-                scanner.signals.finished.connect(self.on_finished)
+                scanner.signals.started.connect(self.on_started_ffmpeg)
+                scanner.signals.progress.connect(self.on_progress_ffmpeg)
+                scanner.signals.finished.connect(self.on_finished_ffmpeg)
                 scanner.signals.scan_result.connect(self.add_table_r128)
-                scanner.signals.error.connect(self.on_error)
+                scanner.signals.error.connect(self.on_error_ffmpeg)
                 self.ffmpeg_scanners.append(scanner)
-                self.thread_pool.start(scanner)
+                self.thread_ffmpeg.start(scanner)
             else:
                 print(now())
                 print('Сканирование R128 файла', file_path, 'уже проводилось')
@@ -2341,13 +2401,13 @@ class VideoInfo(QMainWindow):
                 print(now())
                 print('Анализ чёрного поля файла', tbl_file_path)
                 scanner = BlackDetect(**params)
-                scanner.signals.started.connect(self.on_started)
-                scanner.signals.progress.connect(self.on_progress)
-                scanner.signals.finished.connect(self.on_finished)
+                scanner.signals.started.connect(self.on_started_ffmpeg)
+                scanner.signals.progress.connect(self.on_progress_ffmpeg)
+                scanner.signals.finished.connect(self.on_finished_ffmpeg)
                 scanner.signals.scan_result.connect(self.add_table_black)
-                scanner.signals.error.connect(self.on_error)
-                self.ffprobe_scanners.append(scanner)
-                self.thread_pool.start(scanner)
+                scanner.signals.error.connect(self.on_error_ffmpeg)
+                self.ffmpeg_scanners.append(scanner)
+                self.thread_ffmpeg.start(scanner)
             else:
                 print('Сканирование чёрного поля файла', tbl_file_path, 'уже проводилось')
 
@@ -2373,13 +2433,13 @@ class VideoInfo(QMainWindow):
                 print(now())
                 print('Анализ пропусков звука в', tbl_file_path)
                 scanner = SilenceDetect(**params)
-                scanner.signals.started.connect(self.on_started)
-                scanner.signals.progress.connect(self.on_progress)
-                scanner.signals.finished.connect(self.on_finished)
+                scanner.signals.started.connect(self.on_started_ffmpeg)
+                scanner.signals.progress.connect(self.on_progress_ffmpeg)
+                scanner.signals.finished.connect(self.on_finished_ffmpeg)
                 scanner.signals.scan_result.connect(self.add_table_silence)
-                scanner.signals.error.connect(self.on_error)
+                scanner.signals.error.connect(self.on_error_ffmpeg)
                 self.ffmpeg_scanners.append(scanner)
-                self.thread_pool.start(scanner)
+                self.thread_ffmpeg.start(scanner)
             else:
                 print('Сканирование пропусков звука в', tbl_file_path, 'уже проводилось')
 
@@ -2404,13 +2464,13 @@ class VideoInfo(QMainWindow):
                     'frz_tc_out': frz_tc_out
                 }
                 scanner = FreezeDetect(**params)
-                scanner.signals.started.connect(self.on_started)
-                scanner.signals.progress.connect(self.on_progress)
-                scanner.signals.finished.connect(self.on_finished)
+                scanner.signals.started.connect(self.on_started_ffmpeg)
+                scanner.signals.progress.connect(self.on_progress_ffmpeg)
+                scanner.signals.finished.connect(self.on_finished_ffmpeg)
                 scanner.signals.scan_result.connect(self.add_table_freeze)
-                scanner.signals.error.connect(self.on_error)
+                scanner.signals.error.connect(self.on_error_ffmpeg)
                 self.ffmpeg_scanners.append(scanner)
-                self.thread_pool.start(scanner)
+                self.thread_ffmpeg.start(scanner)
             else:
                 print('Анализ стоп-кадров в', tbl_file_path, 'уже проводился')
 
